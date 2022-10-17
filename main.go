@@ -3,7 +3,6 @@ package cache
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -14,214 +13,120 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+type AlwaysCache struct {
+	cache CacheProvider
+	next  http.Handler
+}
+
+// Middleware returns a new instance of AlwaysCache.
+// AlwaysCache itself is a http.Handler, so it can be used as a middleware.
+func Middleware(next http.Handler) http.Handler {
+	return &AlwaysCache{cache: NewMemCache(), next: next}
+}
+
+// ServeHTTP implements the http.Handler interface.
+// It is the main entry point for the caching middleware.
+func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	logger := getLogger(r)
+	key := getKey(r)
+
+	if isCacheable(r) {
+		// check if we have a cached version
+		if cachedResponse, ok, _ := a.cache.Get(key); ok {
+			logger.Trace().Str("key", key).Msg("Cache hit and serving")
+			resp, err := bytesToResponse(cachedResponse)
+			if err != nil {
+				http.Error(w, "Cannot read response", http.StatusInternalServerError)
+				return
+			}
+			copyHeadersTo(w.Header(), resp.Header)
+			io.Copy(w, resp.Body)
+		} else {
+			a.saveToCache(w, r, logger)
+		}
+	} else {
+		rw := NewResponseSaver(w)
+		a.next.ServeHTTP(rw, r)
+		// update cache for the GET of the same URL
+		logger.Trace().Str("key", key).Msg("Updating cache for self")
+		req, _ := http.NewRequest("GET", r.URL.RequestURI(), nil)
+		a.saveToCache(nil, req, logger)
+		// update cache based on cache-update header
+		for _, update := range rw.Updates() {
+			logger.Trace().Str("key", key).Msgf("Updating cache for %s based on header", update)
+			req, _ := http.NewRequest("GET", update, nil)
+			a.saveToCache(nil, req, logger)
+		}
+	}
+}
+
+// saveToCache saves the response to a particular request `r` to the cache, if the response is cachable.
+// The response is also tee'd to the `w` ResponseWriter.
+// It returns a boolean indicating if the response was cached, along with a possible error.
+// It uses the underlying `next` handler to get the response.
+// `ResponseSaver` is used to save the response to the cache and to tee the response to the `w` ResponseWriter.
+func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger *zerolog.Logger) (bool, error) {
+	rw := NewResponseSaver(w)
+	a.next.ServeHTTP(rw, r)
+	key := getKey(r)
+	if doCache, expiry := shouldCache(rw); doCache {
+		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
+			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
+			return false, err
+		}
+		logger.Trace().Str("key", key).Time("expiry", expiry).Msg("Cache write")
+		return true, nil
+	}
+	logger.Trace().Str("key", key).Msg("Non-cacheable response")
+	return false, nil
+}
+
+// getLogger returns the logger from the request context.
+// If no logger is found, it will return the default logger.
+func getLogger(r *http.Request) *zerolog.Logger {
+	logger := hlog.FromRequest(r)
+	if logger.GetLevel() == zerolog.Disabled {
+		logger = &log.Logger
+	}
+	return logger
+}
+
+// getKey returns the cache key for a request.
+func getKey(r *http.Request) string {
+	return r.URL.RequestURI()
+}
+
+// isCacheable checks if the request is cachable.
+func isCacheable(r *http.Request) bool {
+	return r.Method == "GET"
+}
+
+// shouldCache checks if the response should be cached.
+// If the response is cachable, it will return true, along with the expiration time.
+func shouldCache(rw *ResponseSaver) (bool, time.Time) {
+	if rw.StatusCode() != http.StatusOK {
+		return false, time.Time{}
+	}
+	cacheControl := rw.Header().Get("Cache-Control")
+	maxAge := time.Hour
+	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
+		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
+			maxAge = duration
+		}
+	}
+	return true, time.Now().Add(maxAge)
+}
+
+// bytesToResponse converts a byte slice to a http.Response.
 func bytesToResponse(b []byte) (*http.Response, error) {
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
 }
 
+// copyHeadersTo copies the headers from one http.Header to another.
 func copyHeadersTo(dst, src http.Header) {
 	for name, values := range src {
 		for _, value := range values {
 			dst.Set(name, value)
 		}
 	}
-}
-
-type Cache interface {
-	Get(key string) ([]byte, bool)
-	Put(key string, bytes []byte) error
-	Purge(key string)
-}
-
-type MemCache struct {
-	db map[string][]byte
-}
-
-func (m MemCache) Get(key string) ([]byte, bool) {
-	bytes, ok := m.db[key]
-	return bytes, ok
-}
-func (m MemCache) Put(key string, bytes []byte) error {
-	m.db[key] = bytes
-	return nil
-}
-func (m MemCache) Purge(key string) {
-	delete(m.db, key)
-}
-
-type ResponseWriterTee struct {
-	rw           http.ResponseWriter
-	b            *bytes.Buffer
-	status       int
-	wroteHeaders bool
-}
-
-func (t *ResponseWriterTee) Header() http.Header {
-	return t.rw.Header()
-}
-
-func (t *ResponseWriterTee) WriteHeader(statusCode int) {
-	t.wroteHeaders = true
-	t.status = statusCode
-	t.b.WriteString(fmt.Sprintf("HTTP/1.1 %d %s\n", statusCode, http.StatusText(statusCode)))
-	t.rw.Header().Write(t.b)
-	t.b.WriteString("\n")
-	t.rw.WriteHeader(statusCode)
-}
-
-func (t *ResponseWriterTee) Write(b []byte) (int, error) {
-	if !t.wroteHeaders {
-		t.WriteHeader(http.StatusOK)
-	}
-	t.b.Write(b)
-	return t.rw.Write(b)
-}
-
-func (t *ResponseWriterTee) Response() []byte {
-	return t.b.Bytes()
-}
-
-func (t *ResponseWriterTee) Updates() []string {
-	return t.rw.Header().Values("cache-update")
-}
-
-func NewResponseWriter(w http.ResponseWriter) *ResponseWriterTee {
-	buf := new(bytes.Buffer)
-	return &ResponseWriterTee{rw: w, b: buf}
-}
-
-type DummyResponseWriter struct {
-	http.ResponseWriter
-	header http.Header
-}
-
-func (d DummyResponseWriter) Write(b []byte) (int, error) {
-	return 0, nil
-}
-func (d DummyResponseWriter) WriteHeader(statusCode int) {
-}
-func (d DummyResponseWriter) Header() http.Header {
-	if d.header == nil {
-		d.header = make(http.Header)
-	}
-	return d.header
-}
-
-type Cacher struct {
-	Cache    Cache
-	expiries map[string]time.Time
-}
-
-func (c *Cacher) Get(key string) ([]byte, bool) {
-	if expiry, ok := c.expiries[key]; ok {
-		if time.Now().After(expiry) {
-			c.Cache.Purge(key)
-			delete(c.expiries, key)
-			return nil, false
-		}
-	}
-	return c.Cache.Get(key)
-}
-
-func (c *Cacher) Put(key string, rw *ResponseWriterTee) error {
-	cacheControl := rw.Header().Get("Cache-Control")
-	maxAge := time.Hour
-	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d)+`).FindStringSubmatch(cacheControl); matches != nil {
-		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
-			maxAge = duration
-		}
-	}
-	c.expiries[key] = time.Now().Add(maxAge)
-	return c.Cache.Put(key, rw.Response())
-}
-
-func Middleware(next http.Handler) http.Handler {
-	queue := make(map[string](chan bool))
-	cache := MemCache{make(map[string][]byte)}
-	cacher := Cacher{cache, make(map[string]time.Time)}
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		logger := hlog.FromRequest(r)
-		if logger.GetLevel() == zerolog.Disabled {
-			logger = &log.Logger
-		}
-		key := r.URL.RequestURI()
-
-		if isCacheable(r) {
-			// if there is a cache update going, wait for that
-			if c, ok := queue[key]; ok {
-				logger.Trace().Str("key", key).Msg("Waiting for cache update")
-				go func() {
-					time.Sleep(time.Second * 5)
-					logger.Warn().Str("key", key).Msg("Cache update timed out")
-					c <- false
-				}()
-				<-c
-			}
-			// check if we have a cached version
-			if cachedResponse, ok := cacher.Get(key); ok {
-				logger.Trace().Str("key", key).Msg("Cache hit and serving")
-				resp, err := bytesToResponse(cachedResponse)
-				if err != nil {
-					http.Error(w, "Cannot read response", http.StatusInternalServerError)
-					return
-				}
-				copyHeadersTo(w.Header(), resp.Header)
-				io.Copy(w, resp.Body)
-			} else {
-				rw := NewResponseWriter(w)
-				next.ServeHTTP(rw, r)
-				if shouldCache(rw) {
-					logger.Trace().Str("key", key).Msg("Cache miss and write")
-					cacher.Put(key, rw)
-				} else {
-					logger.Trace().Str("key", key).Msg("Cache miss and not write")
-				}
-			}
-		} else {
-			rw := NewResponseWriter(w)
-			next.ServeHTTP(rw, r)
-			// if we have a cached get request, update
-			if _, found := cache.Get(key); found {
-				queue[key] = make(chan bool, 1)
-				rw := NewResponseWriter(DummyResponseWriter{})
-				req, _ := http.NewRequest("GET", r.URL.RequestURI(), nil)
-				req.Header.Add("Authorization", r.Header.Get("Authorization"))
-				next.ServeHTTP(rw, req)
-				if shouldCache(rw) {
-					logger.Trace().Str("key", key).Msg("Cache update based on path")
-					cacher.Put(key, rw)
-					queue[key] <- true
-				} else {
-					logger.Trace().Str("key", key).Msg("Could not cache update")
-					queue[key] <- false
-				}
-				delete(queue, key)
-			}
-			// update cache based on cache-update header
-			for _, update := range rw.Updates() {
-				queue[update] = make(chan bool, 1)
-				rw := NewResponseWriter(DummyResponseWriter{})
-				req, _ := http.NewRequest("GET", update, nil)
-				req.Header.Add("Authorization", r.Header.Get("Authorization"))
-				next.ServeHTTP(rw, req)
-				if shouldCache(rw) {
-					logger.Trace().Str("key", key).Str("update", update).Msg("Cache update based on headers")
-					cacher.Put(update, rw)
-					queue[update] <- true
-				} else {
-					logger.Trace().Str("key", key).Str("update", update).Msg("Could not cache update")
-					queue[update] <- false
-				}
-				delete(queue, update)
-			}
-		}
-	}
-	return http.HandlerFunc(fn)
-}
-
-func isCacheable(r *http.Request) bool {
-	return r.Method == "GET"
-}
-
-func shouldCache(rw *ResponseWriterTee) bool {
-	return rw.status == http.StatusOK
 }

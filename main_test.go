@@ -101,23 +101,6 @@ func TestCacheUpdate(t *testing.T) {
 	}
 }
 
-func TestCacheOnlyGet(t *testing.T) {
-	handleCount := 0
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleCount++
-		w.Write([]byte("This is a POST"))
-	})
-	req, _ := http.NewRequest("POST", "/", nil)
-	mw := Middleware(handler)
-
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-
-	if handleCount != 2 {
-		t.Fatalf("Handler called %d times", handleCount)
-	}
-}
-
 func TestUpdateOnPost(t *testing.T) {
 	handleCount := 0
 	assertCount := func(count int) {
@@ -152,9 +135,14 @@ func TestUpdateBeforeResponding(t *testing.T) {
 		w.Write([]byte(fmt.Sprintf("%d elements", listCount)))
 	})
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
-		listCount++
-		w.Header().Add("cache-update", "/list")
-		w.Write([]byte("done"))
+		// only add if post request
+		if r.Method == "POST" {
+			listCount++
+			w.Header().Add("cache-update", "/list")
+			w.Write([]byte("done"))
+		} else {
+			w.Write([]byte("nothing to do on get"))
+		}
 	})
 	mw := Middleware(mux)
 
@@ -163,12 +151,9 @@ func TestUpdateBeforeResponding(t *testing.T) {
 	if body := rr.Body.String(); body != "0 elements" {
 		t.Fatalf("body is %s", body)
 	}
-	// create post in separate goroutine
-	go mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/add", nil))
+	// create post, which will update the cache, and return when the response is done
+	mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/add", nil))
 
-	// do the get in the main thread (sleeping a little to make sure the post is done)
-	// this should update the list to the cache and return the new updated cached page
-	time.Sleep(time.Second / 5)
 	rr = httptest.NewRecorder()
 	mw.ServeHTTP(rr, httptest.NewRequest("GET", "/list", nil))
 	if body := rr.Body.String(); body != "1 elements" {
