@@ -14,14 +14,37 @@ import (
 )
 
 type AlwaysCache struct {
-	cache CacheProvider
-	next  http.Handler
+	cache         CacheProvider
+	next          http.Handler
+	defaultMaxAge time.Duration
+}
+
+type Config struct {
+	Cache         CacheProvider
+	DefaultMaxAge time.Duration
+}
+
+// NewAlwaysCache instantiates an AlwaysCache with the given config.
+// The returned `AlwaysCache` is a `http.Handler` and can be used as a middleware.
+func New(c Config) *AlwaysCache {
+	acache := AlwaysCache{
+		cache:         c.Cache,
+		defaultMaxAge: c.DefaultMaxAge,
+	}
+	if acache.cache == nil {
+		acache.cache = NewMemCache()
+	}
+	if acache.defaultMaxAge == 0 {
+		acache.defaultMaxAge = time.Hour
+	}
+	return &acache
 }
 
 // Middleware returns a new instance of AlwaysCache.
 // AlwaysCache itself is a http.Handler, so it can be used as a middleware.
-func Middleware(next http.Handler) http.Handler {
-	return &AlwaysCache{cache: NewMemCache(), next: next}
+func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
+	a.next = next
+	return a
 }
 
 // ServeHTTP implements the http.Handler interface.
@@ -69,7 +92,7 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 	rw := NewResponseSaver(w)
 	a.next.ServeHTTP(rw, r)
 	key := getKey(r)
-	if doCache, expiry := shouldCache(rw); doCache {
+	if doCache, expiry := a.shouldCache(rw); doCache {
 		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
 			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
 			return false, err
@@ -79,6 +102,22 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 	}
 	logger.Trace().Str("key", key).Msg("Non-cacheable response")
 	return false, nil
+}
+
+// shouldCache checks if the response should be cached.
+// If the response is cachable, it will return true, along with the expiration time.
+func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
+	if rw.StatusCode() != http.StatusOK {
+		return false, time.Time{}
+	}
+	cacheControl := rw.Header().Get("Cache-Control")
+	maxAge := a.defaultMaxAge
+	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
+		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
+			maxAge = duration
+		}
+	}
+	return true, time.Now().Add(maxAge)
 }
 
 // getLogger returns the logger from the request context.
@@ -99,22 +138,6 @@ func getKey(r *http.Request) string {
 // isCacheable checks if the request is cachable.
 func isCacheable(r *http.Request) bool {
 	return r.Method == "GET"
-}
-
-// shouldCache checks if the response should be cached.
-// If the response is cachable, it will return true, along with the expiration time.
-func shouldCache(rw *ResponseSaver) (bool, time.Time) {
-	if rw.StatusCode() != http.StatusOK {
-		return false, time.Time{}
-	}
-	cacheControl := rw.Header().Get("Cache-Control")
-	maxAge := time.Hour
-	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
-		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
-			maxAge = duration
-		}
-	}
-	return true, time.Now().Add(maxAge)
 }
 
 // bytesToResponse converts a byte slice to a http.Response.
