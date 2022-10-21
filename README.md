@@ -11,7 +11,8 @@ Caching behavior (such as content expiry) is controlled via HTTP response header
 
 ## Introducing the idea at the Nordic.JS 2022 conference
 
-<iframe width="560" height="315" src="https://www.youtube-nocookie.com/embed/VLAuJO9ivOk" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+[![Nordic.js 2022 • Lightning talk: Eric Selin - Cache all the things for fast and simple backends](http://img.youtube.com/vi/VLAuJO9ivOk/0.jpg)](http://www.youtube.com/watch?v=VLAuJO9ivOk "Nordic.js 2022 • Lightning talk: Eric Selin - Cache all the things for fast and simple backends")
+*Click the image to play on YouTube.*
 
 [Slides](intro-nordicjs-2022/100-http-cache-hit-rate-ericselin.pdf) [Transcript-ish](intro-nordicjs-2022/100-http-cache-hit-rate-ericselin.md)
 
