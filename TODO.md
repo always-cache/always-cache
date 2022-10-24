@@ -3,7 +3,7 @@
 The current focus is to port the client-specific implementation here, as well as document everything.
 
 - [x] Port basic in-memory cache
-- [ ] Implement SQLite cache provider
+- [x] Implement SQLite cache provider
 - [ ] Port cache warmup on startup
 
     This and the following should use `CacheProvider.OldestExpired()`, one entry at a time.

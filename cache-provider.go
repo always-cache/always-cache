@@ -1,8 +1,11 @@
 package cache
 
 import (
+	"database/sql"
 	"sync"
 	"time"
+
+	_ "github.com/glebarez/go-sqlite"
 )
 
 // CacheProvider is an interface for a cache provider.
@@ -82,4 +85,61 @@ func (m MemCache) Purge(key string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	delete(m.db, key)
+}
+
+type SQLiteCache struct {
+	db *sql.DB
+}
+
+func NewSQLiteCache() SQLiteCache {
+	db, err := sql.Open("sqlite", "./cache.db")
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, expires INTEGER, bytes BLOB)")
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS expires_idx ON cache (expires)")
+	if err != nil {
+		panic(err)
+	}
+	return SQLiteCache{
+		db: db,
+	}
+}
+
+func (s SQLiteCache) Get(key string) ([]byte, bool, error) {
+	var expires int64
+	var bytes []byte
+	err := s.db.QueryRow("SELECT expires, bytes FROM cache WHERE key = ?", key).Scan(&expires, &bytes)
+	if err != nil {
+		return nil, false, err
+	}
+	if time.Now().After(time.Unix(expires, 0)) {
+		return nil, false, nil
+	}
+	return bytes, true, nil
+}
+
+func (s SQLiteCache) Put(key string, expires time.Time, bytes []byte) error {
+	_, err := s.db.Exec("INSERT OR REPLACE INTO cache (key, expires, bytes) VALUES (?, ?, ?)", key, expires.Unix(), bytes)
+	return err
+}
+
+func (s SQLiteCache) Oldest() (string, time.Time, error) {
+	var key string
+	var expires int64
+	err := s.db.QueryRow("SELECT key, expires FROM cache ORDER BY expires ASC LIMIT 1").Scan(&key, &expires)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return key, time.Unix(expires, 0), nil
+}
+
+func (s SQLiteCache) Purge(key string) {
+	_, err := s.db.Exec("DELETE FROM cache WHERE key = ?", key)
+	if err != nil {
+		panic(err)
+	}
 }
