@@ -21,12 +21,14 @@ type AlwaysCache struct {
 	next          http.Handler
 	defaultMaxAge time.Duration
 	updateTimeout time.Duration
+	errorHandler  func(err error)
 }
 
 type Config struct {
 	Cache         CacheProvider
 	DefaultMaxAge time.Duration
 	UpdateTimeout time.Duration
+	ErrorHandler  func(err error)
 }
 
 // NewAlwaysCache instantiates an AlwaysCache with the given config.
@@ -36,6 +38,7 @@ func New(c Config) *AlwaysCache {
 		cache:         c.Cache,
 		defaultMaxAge: c.DefaultMaxAge,
 		updateTimeout: c.UpdateTimeout,
+		errorHandler:  c.ErrorHandler,
 	}
 	if acache.cache == nil {
 		acache.cache = NewMemCache()
@@ -72,7 +75,11 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			logger.Trace().Str("key", key).Msg("Cache hit and serving")
 			resp, err := bytesToResponse(cachedResponse)
 			if err != nil {
-				http.Error(w, "Cannot read response", http.StatusInternalServerError)
+				// in case we have a corrupted cache entry, we delete it and serve the request
+				logger.Error().Err(err).Str("key", key).Msg("Could not read from cache")
+				a.next.ServeHTTP(w, r)
+				a.cache.Purge(key)
+				a.errorHandler(err)
 				return
 			}
 			copyHeadersTo(w.Header(), resp.Header)
@@ -141,6 +148,7 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 	if doCache, expiry := a.shouldCache(rw); doCache {
 		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
 			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
+			a.errorHandler(err)
 			return false, err
 		}
 		logger.Trace().Str("key", key).Time("expiry", expiry).Msg("Cache write")
@@ -179,6 +187,7 @@ func (a *AlwaysCache) updateCache() {
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
+			a.errorHandler(err)
 			time.Sleep(a.updateTimeout)
 			continue
 		}
