@@ -17,11 +17,13 @@ type AlwaysCache struct {
 	cache         CacheProvider
 	next          http.Handler
 	defaultMaxAge time.Duration
+	updateTimeout time.Duration
 }
 
 type Config struct {
 	Cache         CacheProvider
 	DefaultMaxAge time.Duration
+	UpdateTimeout time.Duration
 }
 
 // NewAlwaysCache instantiates an AlwaysCache with the given config.
@@ -30,6 +32,7 @@ func New(c Config) *AlwaysCache {
 	acache := AlwaysCache{
 		cache:         c.Cache,
 		defaultMaxAge: c.DefaultMaxAge,
+		updateTimeout: c.UpdateTimeout,
 	}
 	if acache.cache == nil {
 		acache.cache = NewMemCache()
@@ -37,13 +40,20 @@ func New(c Config) *AlwaysCache {
 	if acache.defaultMaxAge == 0 {
 		acache.defaultMaxAge = time.Hour
 	}
+	if acache.updateTimeout == 0 {
+		acache.updateTimeout = time.Minute
+	}
 	return &acache
 }
 
 // Middleware returns a new instance of AlwaysCache.
 // AlwaysCache itself is a http.Handler, so it can be used as a middleware.
 func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
+	// set downstream handler
 	a.next = next
+	// TODO start a goroutine to warm up cache
+	// start a goroutine to update expired entries
+	go a.updateCache()
 	return a
 }
 
@@ -100,7 +110,7 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 		logger.Trace().Str("key", key).Time("expiry", expiry).Msg("Cache write")
 		return true, nil
 	}
-	logger.Trace().Str("key", key).Msg("Non-cacheable response")
+	logger.Trace().Str("key", key).Int("http-status", rw.StatusCode()).Msg("Non-cacheable response")
 	return false, nil
 }
 
@@ -118,6 +128,35 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 		}
 	}
 	return true, time.Now().Add(maxAge)
+}
+
+// updateCache runs an infinite loop to update the cache,
+// one entry at a time.
+// It assumes that the cache key equals the request URL.
+// It will query the cache for entries expiring within the update timeout.
+// If it finds one, it will update the cache for that entry.
+// If it does not find any, it will sleep for the duration of the update timeout.
+func (a *AlwaysCache) updateCache() {
+	log.Info().Msg("Starting cache update loop")
+	for {
+		key, expiry, err := a.cache.Oldest()
+		// if error, try again in 1 minute
+		if err != nil {
+			log.Error().Err(err).Msg("Could not get oldest entry")
+			time.Sleep(a.updateTimeout)
+			continue
+		}
+		// if expiring within 1 minute, update
+		// else sleep for 1 minute
+		if expiry.Sub(time.Now()) <= a.updateTimeout {
+			log.Trace().Str("key", key).Time("expiry", expiry).Msg("Updating cache")
+			req, _ := http.NewRequest("GET", key, nil)
+			a.saveToCache(nil, req, &log.Logger)
+		} else {
+			log.Trace().Msg("No entries expiring, pausing update")
+			time.Sleep(a.updateTimeout)
+		}
+	}
 }
 
 // getLogger returns the logger from the request context.

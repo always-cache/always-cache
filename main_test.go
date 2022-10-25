@@ -21,7 +21,7 @@ func TestMiddlewareReturnsResponse(t *testing.T) {
 	}
 	rr := httptest.NewRecorder()
 
-	Middleware(handler).ServeHTTP(rr, req)
+	New(Config{}).Middleware(handler).ServeHTTP(rr, req)
 
 	if body, err := io.ReadAll(rr.Result().Body); err != nil || fmt.Sprintf("%s", body) != "Hello world" {
 		t.Fatalf("Body is %s", body)
@@ -39,7 +39,7 @@ func TestMiddlewareReturnsSecondRequestFromCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	mw := Middleware(handler)
+	mw := New(Config{}).Middleware(handler)
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
 	mw.ServeHTTP(rr, req)
@@ -64,7 +64,7 @@ func TestCacheHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	mw := Middleware(handler)
+	mw := New(Config{}).Middleware(handler)
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
 	mw.ServeHTTP(rr, req)
@@ -86,7 +86,7 @@ func TestCacheUpdate(t *testing.T) {
 		handleCount++
 		w.Write([]byte(fmt.Sprintf("Called %d times", handleCount)))
 	})
-	mw := Middleware(mux)
+	mw := New(Config{}).Middleware(mux)
 	req, _ := http.NewRequest("POST", "/update", nil)
 	countReq, _ := http.NewRequest("GET", "/count", nil)
 
@@ -114,7 +114,7 @@ func TestUpdateOnPost(t *testing.T) {
 	})
 	get, _ := http.NewRequest("GET", "/", nil)
 	post, _ := http.NewRequest("POST", "/", nil)
-	mw := Middleware(handler)
+	mw := New(Config{}).Middleware(handler)
 
 	mw.ServeHTTP(httptest.NewRecorder(), get)
 	assertCount(1)
@@ -144,7 +144,7 @@ func TestUpdateBeforeResponding(t *testing.T) {
 			w.Write([]byte("nothing to do on get"))
 		}
 	})
-	mw := Middleware(mux)
+	mw := New(Config{}).Middleware(mux)
 
 	rr := httptest.NewRecorder()
 	mw.ServeHTTP(rr, httptest.NewRequest("GET", "/list", nil))
@@ -169,7 +169,7 @@ func TestCacheOnlySuccess(t *testing.T) {
 		w.Write([]byte("Hello world"))
 	})
 	req, _ := http.NewRequest("GET", "/", nil)
-	mw := Middleware(handler)
+	mw := New(Config{}).Middleware(handler)
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
 	mw.ServeHTTP(httptest.NewRecorder(), req)
@@ -179,22 +179,37 @@ func TestCacheOnlySuccess(t *testing.T) {
 	}
 }
 
-func TestMaxAge(t *testing.T) {
-	handleCount := 0
+// TestMaxAgeUpdate tests that the cache is updated when the max-age is reached.
+// This is done by setting the max-age to 1 second and the update timeout to 0.5 seconds.
+//
+// This is what we will do and what we expect to happen:
+// 1. Request the resource, which will be cached for 1 second.
+// 2. Change the response to something new.
+// 2. Sleep for 1 second, and in the meantime the cached resource should be updated.
+// 3. Turn off the handler, so we know the next request will be served from the cache.
+// 4. Request the resource again, which should be the updated resource served from the cache.
+func TestMaxAgeUpdate(t *testing.T) {
+	response := "Hello world"
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleCount++
+		if response == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		w.Header().Add("cache-control", "max-age=1")
-		w.Write([]byte("Hello world"))
+		w.Write([]byte(response))
 	})
+	mw := New(Config{UpdateTimeout: time.Second / 2}).Middleware(handler)
 	req, _ := http.NewRequest("GET", "/", nil)
-	mw := Middleware(handler)
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
+	response = "Hello world 2"
 	time.Sleep(time.Second)
-	mw.ServeHTTP(httptest.NewRecorder(), req)
+	response = ""
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
 
-	if handleCount != 2 {
-		t.Fatalf("Handler called %d times", handleCount)
+	if body := rr.Body.String(); body != "Hello world 2" {
+		t.Fatalf("body is %s", body)
 	}
 }
 
@@ -212,7 +227,7 @@ func TestChiMiddleware(t *testing.T) {
 		w.Header().Add("cache-update", "/chi-list")
 		w.Write([]byte("post"))
 	})
-	handler := Middleware(r)
+	handler := New(Config{}).Middleware(r)
 
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/chi", nil))
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/chi", nil))
