@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -86,11 +89,44 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.saveToCache(nil, req, logger)
 		// update cache based on cache-update header
 		for _, update := range rw.Updates() {
-			logger.Trace().Str("key", key).Msgf("Updating cache for %s based on header", update)
-			req, _ := http.NewRequest("GET", update, nil)
-			a.saveToCache(nil, req, logger)
+			url := getURL(r, update)
+			delay := getDelay(update)
+			logger.Trace().Str("key", key).Dur("delay", delay).Msgf("Updating cache for %s based on header", url.Path)
+			req, _ := http.NewRequest("GET", url.Path, nil)
+			if delay > 0 {
+				go func() {
+					time.Sleep(delay)
+					a.saveToCache(nil, req, logger)
+				}()
+			} else {
+				a.saveToCache(nil, req, logger)
+			}
 		}
 	}
+}
+
+// getURL returns the URL to update the cache for from the `Cache-Update` header parameter.
+// The URL is the first parameter in the header value (separated by a semicolon).
+func getURL(r *http.Request, update string) *url.URL {
+	possiblyRelativeURL := update
+	if i := strings.Index(update, ";"); i != -1 {
+		possiblyRelativeURL = update[:i]
+	}
+	return r.URL.ResolveReference(&url.URL{Path: possiblyRelativeURL})
+}
+
+// getDelay returns the delay to wait before updating the cache for from the `Cache-Update` header parameter.
+// The delay directive syntax is `delay=N`, where N is the number of seconds to wait.
+// Directives are separated by a semicolon.
+// If no delay directive is found, it returns 0.
+func getDelay(update string) time.Duration {
+	// get the delay directive based on regular expression
+	if matches := regexp.MustCompile(`(?i)\bdelay=(\d+)`).FindStringSubmatch(update); matches != nil {
+		if delay, err := strconv.Atoi(matches[1]); err == nil {
+			return time.Duration(delay) * time.Second
+		}
+	}
+	return 0
 }
 
 // saveToCache saves the response to a particular request `r` to the cache, if the response is cachable.
@@ -137,7 +173,7 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 // If it finds one, it will update the cache for that entry.
 // If it does not find any, it will sleep for the duration of the update timeout.
 func (a *AlwaysCache) updateCache() {
-	log.Info().Msg("Starting cache update loop")
+	log.Info().Msgf("Starting cache update loop with timeout %s", a.updateTimeout)
 	for {
 		key, expiry, err := a.cache.Oldest()
 		// if error, try again in 1 minute
@@ -148,7 +184,7 @@ func (a *AlwaysCache) updateCache() {
 		}
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
-		if expiry.Sub(time.Now()) <= a.updateTimeout {
+		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
 			log.Trace().Str("key", key).Time("expiry", expiry).Msg("Updating cache")
 			req, _ := http.NewRequest("GET", key, nil)
 			a.saveToCache(nil, req, &log.Logger)

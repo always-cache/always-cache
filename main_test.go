@@ -213,6 +213,54 @@ func TestMaxAgeUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateDelay tests that the `delay` directive works as expected.
+// It should delay the update of the cache by the specified amount of time.
+//
+// This is what we will do and what we expect to happen:
+// 1. Request the resource, with a default max-age of 60 seconds.
+// 2. POST an update to the resource, with a delay of 1 second.
+// 3. Sleep for 100 ms just in case.
+// 4. Update the response to something new.
+// 5. Sleep for 1 second, and in the meantime the cached resource should be updated.
+// 6. Turn off the handler, so we know the next request will be served from the cache.
+// 7. Request the resource again, which should be the updated resource served from the cache.
+func TestUpdateDelay(t *testing.T) {
+	response := "Hello world"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if response == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(response))
+	})
+	mux.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.Header().Add("cache-update", "/; delay=1")
+			w.Write([]byte("done"))
+		} else {
+			http.Error(w, "nothing to do on get", http.StatusMethodNotAllowed)
+		}
+	})
+	mw := New(Config{}).Middleware(mux)
+	get, _ := http.NewRequest("GET", "/", nil)
+	post, _ := http.NewRequest("POST", "/update", nil)
+	rr := httptest.NewRecorder()
+	time.Sleep(time.Millisecond * 100)
+
+	mw.ServeHTTP(httptest.NewRecorder(), get)  // 1.
+	mw.ServeHTTP(httptest.NewRecorder(), post) // 2.
+	time.Sleep(time.Millisecond * 100)         // 3.
+	response = "Hello world 2"                 // 4.
+	time.Sleep(time.Second)                    // 5.
+	response = ""                              // 6.
+	mw.ServeHTTP(rr, get)                      // 7.
+
+	if body := rr.Body.String(); body != "Hello world 2" {
+		t.Fatalf("body is %s", body)
+	}
+}
+
 func TestChiMiddleware(t *testing.T) {
 	listLength := 0
 	r := chi.NewRouter()
