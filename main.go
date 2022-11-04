@@ -3,7 +3,12 @@ package cache
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"io"
+	"io/ioutil"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -22,6 +27,7 @@ type AlwaysCache struct {
 	defaultMaxAge time.Duration
 	updateTimeout time.Duration
 	errorHandler  func(err error)
+	methods       map[string]struct{}
 }
 
 type Config struct {
@@ -29,6 +35,7 @@ type Config struct {
 	DefaultMaxAge time.Duration
 	UpdateTimeout time.Duration
 	ErrorHandler  func(err error)
+	Methods       []string
 }
 
 // NewAlwaysCache instantiates an AlwaysCache with the given config.
@@ -49,6 +56,10 @@ func New(c Config) *AlwaysCache {
 	if acache.updateTimeout == 0 {
 		acache.updateTimeout = time.Minute
 	}
+	acache.methods = make(map[string]struct{})
+	for _, method := range c.Methods {
+		acache.methods[method] = struct{}{}
+	}
 	return &acache
 }
 
@@ -57,7 +68,6 @@ func New(c Config) *AlwaysCache {
 func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
 	// set downstream handler
 	a.next = next
-	// TODO start a goroutine to warm up cache
 	// start a goroutine to update expired entries
 	go a.updateCache()
 	return a
@@ -67,9 +77,9 @@ func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
 // It is the main entry point for the caching middleware.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger := getLogger(r)
-	key := getKey(r)
 
-	if isCacheable(r) {
+	if a.isCacheable(r) {
+		key := getKey(r)
 		// check if we have a cached version
 		if cachedResponse, ok, _ := a.cache.Get(key); ok {
 			logger.Trace().Str("key", key).Msg("Cache hit and serving")
@@ -85,20 +95,21 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			copyHeadersTo(w.Header(), resp.Header)
 			io.Copy(w, resp.Body)
 		} else {
+			// TODO for cachable POSTs, this call will trigger another read of the body, which is not ideal
 			a.saveToCache(w, r, logger)
 		}
 	} else {
 		rw := NewResponseSaver(w)
 		a.next.ServeHTTP(rw, r)
 		// update cache for the GET of the same URL
-		logger.Trace().Str("key", key).Msg("Updating cache for self")
+		logger.Trace().Str("path", r.URL.Path).Msg("Updating cache for self")
 		req, _ := http.NewRequest("GET", r.URL.RequestURI(), nil)
 		a.saveToCache(nil, req, logger)
 		// update cache based on cache-update header
 		for _, update := range rw.Updates() {
 			url := getURL(r, update)
 			delay := getDelay(update)
-			logger.Trace().Str("key", key).Dur("delay", delay).Msgf("Updating cache for %s based on header", url.Path)
+			logger.Trace().Str("path", r.URL.Path).Dur("delay", delay).Msgf("Updating cache for %s based on header", url.Path)
 			req, _ := http.NewRequest("GET", url.Path, nil)
 			if delay > 0 {
 				go func() {
@@ -143,8 +154,11 @@ func getDelay(update string) time.Duration {
 // `ResponseSaver` is used to save the response to the cache and to tee the response to the `w` ResponseWriter.
 func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger *zerolog.Logger) (bool, error) {
 	rw := NewResponseSaver(w)
-	a.next.ServeHTTP(rw, r)
+	// need to get key before calling next, because next might change the request, and will definitely read the body
 	key := getKey(r)
+
+	a.next.ServeHTTP(rw, r)
+
 	if doCache, expiry := a.shouldCache(rw); doCache {
 		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
 			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
@@ -166,7 +180,7 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 	}
 	cacheControl := rw.Header().Get("Cache-Control")
 	maxAge := a.defaultMaxAge
-	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
+	if matches := regexp.MustCompile(`(?i)\bs-maxage=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
 		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
 			maxAge = duration
 		}
@@ -187,7 +201,9 @@ func (a *AlwaysCache) updateCache() {
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
-			a.errorHandler(err)
+			if a.errorHandler != nil {
+				a.errorHandler(err)
+			}
 			time.Sleep(a.updateTimeout)
 			continue
 		}
@@ -204,6 +220,14 @@ func (a *AlwaysCache) updateCache() {
 	}
 }
 
+// isCacheable checks if the request is cachable.
+func (a *AlwaysCache) isCacheable(r *http.Request) bool {
+	if _, ok := a.methods["POST"]; ok && r.Method == "POST" {
+		return true
+	}
+	return r.Method == "GET"
+}
+
 // getLogger returns the logger from the request context.
 // If no logger is found, it will return the default logger.
 func getLogger(r *http.Request) *zerolog.Logger {
@@ -215,13 +239,58 @@ func getLogger(r *http.Request) *zerolog.Logger {
 }
 
 // getKey returns the cache key for a request.
+// If it is a GET request, it will return the URL.
+// If it is a POST request, it will return the URL combined with a hash of the body.
 func getKey(r *http.Request) string {
+	if r.Method == "POST" {
+		if multipartHash := multipartHash(r); multipartHash != "" {
+			return r.URL.RequestURI() + ":" + multipartHash
+		} else {
+			return r.URL.RequestURI() + ":" + bodyHash(r)
+		}
+	}
 	return r.URL.RequestURI()
 }
 
-// isCacheable checks if the request is cachable.
-func isCacheable(r *http.Request) bool {
-	return r.Method == "GET"
+// multipartHash returns the hash of a multipart request body.
+// It returns an empty string if the request is not multipart.
+// When it returns, the request body will be rewound to the beginning.
+func multipartHash(r *http.Request) string {
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return ""
+	}
+	if strings.HasPrefix(mediaType, "multipart/") {
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			panic(err)
+		}
+		r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+
+		mr := multipart.NewReader(bytes.NewBuffer(body), params["boundary"])
+		p, err := mr.NextPart()
+		if err != nil {
+			return ""
+		}
+		slurp, err := io.ReadAll(p)
+		if err != nil {
+			panic(err)
+		}
+
+		return fmt.Sprintf("%x", sha256.Sum256(slurp))
+	}
+	return ""
+}
+
+// bodyHash returns the hash of a request body.
+// When it returns, the request body will be rewound to the beginning.
+func bodyHash(r *http.Request) string {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		panic(err)
+	}
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+	return fmt.Sprintf("%x", sha256.Sum256(body))
 }
 
 // bytesToResponse converts a byte slice to a http.Response.
