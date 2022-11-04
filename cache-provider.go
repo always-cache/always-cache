@@ -104,6 +104,10 @@ func NewSQLiteCache() SQLiteCache {
 	if err != nil {
 		panic(err)
 	}
+	_, err = db.Exec("PRAGMA journal_mode=WAL")
+	if err != nil {
+		panic(err)
+	}
 	return SQLiteCache{
 		db: db,
 	}
