@@ -183,13 +183,22 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 	if rw.StatusCode() != http.StatusOK {
 		return false, time.Time{}
 	}
-	cacheControl := rw.Header().Get("Cache-Control")
+	cacheControl := ParseCacheControl(rw.Header().Get("Cache-Control"))
+
+	var maxAgeStr string
+	if val, ok := cacheControl.Get("s-maxage"); ok {
+		maxAgeStr = val
+	} else if val, ok := cacheControl.Get("max-age"); ok {
+		maxAgeStr = val
+	}
+
 	maxAge := a.defaultMaxAge
-	if matches := regexp.MustCompile(`(?i)\bmax-age=(\d+)`).FindStringSubmatch(cacheControl); matches != nil {
-		if duration, err := time.ParseDuration(matches[1] + "s"); err == nil {
+	if maxAgeStr != "" {
+		if duration, err := time.ParseDuration(maxAgeStr + "s"); err == nil {
 			maxAge = duration
 		}
 	}
+
 	return true, time.Now().Add(maxAge)
 }
 
