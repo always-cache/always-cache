@@ -1,0 +1,13 @@
+origins:
+  - url: https://www.arktis3d.com
+    maxAge: 1h
+    locations:
+      - path: /api/**/*
+        methods:
+          - POST
+        headers:
+          ARKTIS-REFERER: http://localhost
+          ARKTIS-AGENT-STRING: Always-Cache
+        vary:
+          - ARKTIS-PROJECT
+          - ARKTIS-CONFIGURATOR-TOKEN

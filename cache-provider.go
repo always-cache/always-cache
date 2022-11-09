@@ -1,4 +1,4 @@
-package cache
+package main
 
 import (
 	"database/sql"
@@ -88,7 +88,8 @@ func (m MemCache) Purge(key string) {
 }
 
 type SQLiteCache struct {
-	db *sql.DB
+	db         *sql.DB
+	writeMutex *sync.Mutex
 }
 
 func NewSQLiteCache() SQLiteCache {
@@ -109,7 +110,8 @@ func NewSQLiteCache() SQLiteCache {
 		panic(err)
 	}
 	return SQLiteCache{
-		db: db,
+		db:         db,
+		writeMutex: &sync.Mutex{},
 	}
 }
 
@@ -127,6 +129,8 @@ func (s SQLiteCache) Get(key string) ([]byte, bool, error) {
 }
 
 func (s SQLiteCache) Put(key string, expires time.Time, bytes []byte) error {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
 	_, err := s.db.Exec("INSERT OR REPLACE INTO cache (key, expires, bytes) VALUES (?, ?, ?)", key, expires.Unix(), bytes)
 	return err
 }
