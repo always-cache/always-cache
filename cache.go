@@ -180,11 +180,19 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 // shouldCache checks if the response should be cached.
 // If the response is cachable, it will return true, along with the expiration time.
 func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
+	// cache only success (HTTP 200)
 	if rw.StatusCode() != http.StatusOK {
 		return false, time.Time{}
 	}
+
 	cacheControl := ParseCacheControl(rw.Header().Get("Cache-Control"))
 
+	// should not cache if no-cache set
+	if _, ok := cacheControl.Get("no-cache"); ok {
+		return false, time.Time{}
+	}
+
+	// get max age in order: s-maxage, max-age, DEFAULT
 	var maxAgeStr string
 	if val, ok := cacheControl.Get("s-maxage"); ok {
 		maxAgeStr = val
