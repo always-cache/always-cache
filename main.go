@@ -57,7 +57,12 @@ func main() {
 		panic(err)
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		// do not follow redirects
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req, err := http.NewRequest(r.Method, downstreamURL.String()+r.URL.RequestURI(), r.Body)
