@@ -2,9 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -20,15 +23,12 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-var (
-	host string
-	port string
-)
-
 func main() {
-	host := flag.String("h", "", "Hostname for downstream (HTTPS) server")
+	host := flag.String("h", "", "URL for downstream server")
 	port := flag.String("p", "8080", "Local port for incoming requests")
 	defaultMaxAge := flag.Duration("max-age", time.Hour, "Default max age if not set in response")
+	methods := flag.String("methods", "", "Additional methods to cache, comma-separated")
+	provider := flag.String("provider", "sqlite", "Cache provider to use")
 	flag.Parse()
 
 	if *host == "" || *port == "" {
@@ -36,17 +36,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	acache := New(Config{
-		Methods:       []string{"POST"},
-		Cache:         NewSQLiteCache(),
+	conf := Config{
 		DefaultMaxAge: *defaultMaxAge,
-	})
+	}
+	switch *provider {
+	case "sqlite":
+		conf.Cache = NewSQLiteCache()
+	case "memory":
+		conf.Cache = NewMemCache()
+	default:
+		panic(fmt.Sprintf("Unsupported cache provider: %s", *provider))
+	}
+	if *methods != "" {
+		conf.Methods = strings.Split(*methods, ",")
+	}
+	acache := New(conf)
+
+	downstreamURL, err := url.Parse(*host)
+	if err != nil {
+		panic(err)
+	}
+
 	client := &http.Client{}
 
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		req, err := http.NewRequest(r.Method, "https://"+*host+r.URL.RequestURI(), r.Body)
+		req, err := http.NewRequest(r.Method, downstreamURL.String()+r.URL.RequestURI(), r.Body)
 		copyHeader(req.Header, r.Header)
-		req.Header.Set("Host", *host)
+		req.Header.Set("Host", downstreamURL.Host)
 		if err != nil {
 			panic(err)
 		}
@@ -60,5 +76,8 @@ func main() {
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	})
-	http.ListenAndServe(":"+*port, acache.Middleware(downstream))
+	err = http.ListenAndServe(":"+*port, acache.Middleware(downstream))
+	if err != nil {
+		panic(err)
+	}
 }
