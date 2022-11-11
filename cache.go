@@ -53,9 +53,6 @@ func New(c Config) *AlwaysCache {
 	if acache.cache == nil {
 		acache.cache = NewMemCache()
 	}
-	if acache.defaultMaxAge == 0 {
-		acache.defaultMaxAge = time.Hour
-	}
 	if acache.updateTimeout == 0 {
 		acache.updateTimeout = time.Minute
 	}
@@ -210,6 +207,18 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 		if duration, err := time.ParseDuration(maxAgeStr + "s"); err == nil {
 			maxAge = duration
 		}
+	}
+
+	log.Trace().Msgf("Max age %s", maxAge.String())
+
+	// do not cache if max-age not set
+	if maxAge == 0 {
+		return false, time.Time{}
+	}
+	// do not cache if max age less than update interval
+	if !a.disableUpdates && maxAge < a.updateTimeout {
+		log.Trace().Msgf("Max age %s less than update timeout %s", maxAge, a.updateTimeout)
+		return false, time.Time{}
 	}
 
 	return true, time.Now().Add(maxAge)

@@ -34,6 +34,11 @@ func main() {
 	noUpdate := flag.Bool("no-update", false, "Disable automatic updates of stale content")
 	flag.Parse()
 
+	// print set flags for debugging
+	flag.VisitAll(func(flag *flag.Flag) {
+		log.Debug().Msgf("Flag %s: %s", flag.Name, flag.Value)
+	})
+
 	if *downstream == "" || *port == "" {
 		flag.Usage()
 		os.Exit(1)
