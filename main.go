@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 func copyHeader(dst, src http.Header) {
@@ -29,6 +31,7 @@ func main() {
 	defaultMaxAge := flag.Duration("max-age", time.Hour, "Default max age if not set in response")
 	methods := flag.String("methods", "", "Additional methods to cache, comma-separated")
 	provider := flag.String("provider", "sqlite", "Cache provider to use")
+	noUpdate := flag.Bool("no-update", false, "Disable automatic updates of stale content")
 	flag.Parse()
 
 	if *downstream == "" || *port == "" {
@@ -37,7 +40,8 @@ func main() {
 	}
 
 	conf := Config{
-		DefaultMaxAge: *defaultMaxAge,
+		DefaultMaxAge:  *defaultMaxAge,
+		DisableUpdates: *noUpdate,
 	}
 	switch *provider {
 	case "sqlite":
@@ -81,6 +85,7 @@ func main() {
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	})
+	log.Info().Msgf("Proxying port %s to %s", *port, downstreamURL)
 	err = http.ListenAndServe(":"+*port, acache.Middleware(handler))
 	if err != nil {
 		panic(err)

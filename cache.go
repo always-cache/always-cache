@@ -22,30 +22,33 @@ import (
 )
 
 type AlwaysCache struct {
-	cache         CacheProvider
-	next          http.Handler
-	defaultMaxAge time.Duration
-	updateTimeout time.Duration
-	errorHandler  func(err error)
-	methods       map[string]struct{}
+	cache          CacheProvider
+	next           http.Handler
+	defaultMaxAge  time.Duration
+	updateTimeout  time.Duration
+	errorHandler   func(err error)
+	disableUpdates bool
+	methods        map[string]struct{}
 }
 
 type Config struct {
-	Cache         CacheProvider
-	DefaultMaxAge time.Duration
-	UpdateTimeout time.Duration
-	ErrorHandler  func(err error)
-	Methods       []string
+	Cache          CacheProvider
+	DefaultMaxAge  time.Duration
+	UpdateTimeout  time.Duration
+	ErrorHandler   func(err error)
+	DisableUpdates bool
+	Methods        []string
 }
 
 // NewAlwaysCache instantiates an AlwaysCache with the given config.
 // The returned `AlwaysCache` is a `http.Handler` and can be used as a middleware.
 func New(c Config) *AlwaysCache {
 	acache := AlwaysCache{
-		cache:         c.Cache,
-		defaultMaxAge: c.DefaultMaxAge,
-		updateTimeout: c.UpdateTimeout,
-		errorHandler:  c.ErrorHandler,
+		cache:          c.Cache,
+		defaultMaxAge:  c.DefaultMaxAge,
+		updateTimeout:  c.UpdateTimeout,
+		errorHandler:   c.ErrorHandler,
+		disableUpdates: c.DisableUpdates,
 	}
 	if acache.cache == nil {
 		acache.cache = NewMemCache()
@@ -69,7 +72,9 @@ func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
 	// set downstream handler
 	a.next = next
 	// start a goroutine to update expired entries
-	go a.updateCache()
+	if !a.disableUpdates {
+		go a.updateCache()
+	}
 	return a
 }
 
