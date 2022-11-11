@@ -102,8 +102,10 @@ Cache-Update: no-wait; /blog-posts/all delay=5
 ## Usage
 
 ```
-#> always-cache -h http://localhost:8081 -p 8080
+$> always-cache --downstream http://localhost:8081 --port 8080
 ```
+
+There are many more flags than in the above example. See `always-cache -h` for more information.
 
 ## Background
 
