@@ -17,7 +17,9 @@ func copyHeader(dst, src http.Header) {
 	for k, vv := range src {
 		// this is a warkaround to remove default headers sent by an upstream proxy
 		// some servers do not like the presence of these headers in the downstream request
-		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" {
+		// also remove conditional request headers, since they are not supported
+		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" &&
+			k != "If-None-Match" && k != "If-Modified-Since" {
 			for _, v := range vv {
 				dst.Add(k, v)
 			}
