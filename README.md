@@ -50,7 +50,7 @@ The caching behavior of `always-cache` is controlled via HTTP headers. The speci
 
 ### Read requests
 
-Successful `GET` requests are always cached (except if explicitly forbidden). The caching behavior is set in the `Cache-Control` header, and follows the HTTP caching standard (RFC 7234). **Currently, the only supported directive in the open source version is `max-age`. The `Always-Cache-Control` header is not yet supported.**
+Successful `GET` requests are always cached (except if explicitly forbidden). The caching behavior is set in the `Cache-Control` header, and follows the HTTP caching standard (RFC 7234). **The `Always-Cache-Control` header is not yet supported.**
 
 #### `Cache-Control` header
 
@@ -62,8 +62,9 @@ Cache-Control: <directive>+
 
 Directives:
 
-- `max-age=N`: consider the response "fresh" for *N* seconds.
-- `no-cache`: do not cache the response. **not implemented**
+- `s-maxage=N`: consider the response "fresh" for *N* seconds.
+- `max-age=N`: consider the response "fresh" for *N* seconds (used only if no `s-maxage`).
+- `no-cache`: do not cache the response.
 
 Example:
 
@@ -72,8 +73,6 @@ Cache-Control: max-age=3600
 ```
 
 ### Write requests
-
-> Write request handling is not yet ported to the open source version
 
 Write requests (requests that change data) are never cached. However, by their very nature, these requests change data in some way. This means that cached responses most probably need to be updated. As per the RFC recommendation, the current page is updated by default. I.e. `POST /blog-posts/my-blog-post` will update the cache for `GET /blog-posts/my-blog-post`. Oftentimes there is also a need to update a list page or some other page(s) as well (e.g. `/blog-posts/all`. This can be achieved with the `Cache-Update` header.
 
@@ -85,48 +84,25 @@ Syntax:
 Cache-Update: [ <url-path> | <directive>+ ]
 ```
 
-If no URL path (`<url-path>`) is specified, the directives take effect on the current url.
+`<url-path>` may be relative to the current URL, i.e. the URL of the write request. If no URL path (`<url-path>`) is specified, the directives take effect on the current url.
 
 Directives:
 
+- `delay=N`: delay updating the cache by *N* seconds; implies `no-wait`.
 - `no-wait`: finish the response without waiting for updates to conclude. **not implemented**
 - `no-update`: do not update the cache (useful only for the current URL, of course). **not implemented**
-- `delay=N`: delay updating the cache by *N* seconds; implies `no-wait`. **not implemented**
 
 Example:
 
 ```
+Cache-Update: ../list
 Cache-Update: no-wait; /blog-posts/all delay=5
 ```
 
 ## Usage
 
-> Running `always-cache` as a standalone proxy or as a [Caddy](https://caddyserver.com) plugin is planned, but not yet finished.
-
-Use `always-cache` as a standard middleware in your Golang HTTP server:
-
-```go
-package main
-
-import (
-  "fmt"
-	"net/http"
-	"time"
-
-	"github.com/ericselin/always-cache"
-)
-
-func main() {
-	acache := cache.New(cache.Config{
-		DefaultMaxAge: 5 * time.Minute,
-	})
-
-  handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    fmt.Fprintf(w, "Hello, %q", r.URL.Path)
-  })
-
-	http.ListenAndServe(":8080", acache.Middleware(handler))
-}
+```
+#> always-cache -h http://localhost:8081 -p 8080
 ```
 
 ## Background

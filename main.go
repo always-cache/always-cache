@@ -24,14 +24,14 @@ func copyHeader(dst, src http.Header) {
 }
 
 func main() {
-	host := flag.String("h", "", "URL for downstream server")
-	port := flag.String("p", "8080", "Local port for incoming requests")
+	downstream := flag.String("downstream", "", "URL for downstream server")
+	port := flag.String("port", "8080", "Local port for incoming requests")
 	defaultMaxAge := flag.Duration("max-age", time.Hour, "Default max age if not set in response")
 	methods := flag.String("methods", "", "Additional methods to cache, comma-separated")
 	provider := flag.String("provider", "sqlite", "Cache provider to use")
 	flag.Parse()
 
-	if *host == "" || *port == "" {
+	if *downstream == "" || *port == "" {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -52,7 +52,7 @@ func main() {
 	}
 	acache := New(conf)
 
-	downstreamURL, err := url.Parse(*host)
+	downstreamURL, err := url.Parse(*downstream)
 	if err != nil {
 		panic(err)
 	}
@@ -64,7 +64,7 @@ func main() {
 		},
 	}
 
-	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req, err := http.NewRequest(r.Method, downstreamURL.String()+r.URL.RequestURI(), r.Body)
 		copyHeader(req.Header, r.Header)
 		req.Header.Set("Host", downstreamURL.Host)
@@ -81,7 +81,7 @@ func main() {
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	})
-	err = http.ListenAndServe(":"+*port, acache.Middleware(downstream))
+	err = http.ListenAndServe(":"+*port, acache.Middleware(handler))
 	if err != nil {
 		panic(err)
 	}
