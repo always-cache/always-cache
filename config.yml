@@ -8,13 +8,10 @@ origins:
   - origin: https://www.arktis3d.com
     host: arktis3d.localhost
     disableUpdate: true
-    defaults:
-      cacheControl: s-maxage=43200
-      safeMethods:
-        - POST
-    # paths:
-    #   - prefix: /api/
-    #     safeMethods:
-    #       - POST
-    #     # 12h default ttl
-    #     defaultCacheControl: s-maxage=43200
+    paths:
+      - prefix: /api/
+        defaults:
+          safeMethods:
+            - POST
+          # 12h default ttl
+          cacheControl: s-maxage=43200

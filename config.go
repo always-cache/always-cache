@@ -13,16 +13,11 @@ type Config struct {
 }
 
 type ConfigOrigin struct {
-	Origin        string       `yaml:"origin"`
-	Host          string       `yaml:"host"`
-	DisableUpdate bool         `yaml:"disableUpdate"`
-	Defaults      Defaults     `yaml:"defaults"`
-	Paths         []ConfigPath `yaml:"paths"`
-}
-
-type ConfigPath struct {
-	Prefix              string `yaml:"prefix"`
-	DefaultCacheControl string `yaml:"defaultCacheControl"`
+	Origin        string   `yaml:"origin"`
+	Host          string   `yaml:"host"`
+	DisableUpdate bool     `yaml:"disableUpdate"`
+	Defaults      Defaults `yaml:"defaults"`
+	Paths         []Path   `yaml:"paths"`
 }
 
 func (m *SafeMethods) UnmarshalYAML(value *yaml.Node) error {

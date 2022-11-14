@@ -26,10 +26,12 @@ type AlwaysCache struct {
 	next          http.Handler
 	updateTimeout time.Duration
 	defaults      Defaults
-	paths         []struct {
-		prefix   string
-		defaults Defaults
-	}
+	paths         []Path
+}
+
+type Path struct {
+	Prefix   string   `yaml:"prefix"`
+	Defaults Defaults `yaml:"defaults"`
 }
 
 type Defaults struct {
@@ -69,6 +71,10 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.next.ServeHTTP(w, r)
 		return
 	}
+
+	// TODO defaults from path matches (that we get here) are not used yet!
+	defaults := a.getDefaults(r)
+	log.Trace().Msgf("Defaults: %+v", defaults)
 
 	if a.isCacheable(r) {
 		key := getKey(r)
@@ -271,6 +277,17 @@ func (a *AlwaysCache) isCacheable(r *http.Request) bool {
 	}
 
 	return r.Method == "GET"
+}
+
+// getDefaults gets the configuration for the requested path,
+// falling back to the global defaults if no paths match
+func (a *AlwaysCache) getDefaults(r *http.Request) Defaults {
+	for _, path := range a.paths {
+		if strings.HasPrefix(r.URL.Path, path.Prefix) {
+			return path.Defaults
+		}
+	}
+	return a.defaults
 }
 
 // getLogger returns the logger from the request context.

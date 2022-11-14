@@ -52,6 +52,9 @@ func main() {
 	// set defaults to configured origin defaults
 	acache.defaults = origin.Defaults
 
+	// set paths
+	acache.paths = origin.Paths
+
 	// use configured provider, panic if none specified
 	switch config.Provider {
 	case "sqlite":
