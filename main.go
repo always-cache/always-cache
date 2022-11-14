@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -28,42 +27,47 @@ func copyHeader(dst, src http.Header) {
 }
 
 func main() {
-	downstream := flag.String("downstream", "", "URL for downstream server")
-	port := flag.String("port", "8080", "Local port for incoming requests")
-	defaultMaxAge := flag.Duration("max-age", time.Hour, "Default max age if not set in response")
-	methods := flag.String("methods", "", "Additional methods to cache, comma-separated")
-	provider := flag.String("provider", "sqlite", "Cache provider to use")
-	noUpdate := flag.Bool("no-update", false, "Disable automatic updates of stale content")
+	configFile := flag.String("config", "config.yml", "Path to config file")
 	flag.Parse()
 
-	// print set flags for debugging
-	flag.VisitAll(func(flag *flag.Flag) {
-		log.Debug().Msgf("Flag %s: %s", flag.Name, flag.Value)
-	})
+	config, err := getConfig(*configFile)
+	if err != nil {
+		panic(err)
+	}
 
-	if *downstream == "" || *port == "" {
-		flag.Usage()
+	if config.Port <= 0 || len(config.Origins) != 1 {
+		fmt.Println("Need port and exactly one origin")
 		os.Exit(1)
 	}
 
-	conf := Config{
-		DefaultMaxAge:  *defaultMaxAge,
-		DisableUpdates: *noUpdate,
+	origin := config.Origins[0]
+
+	// temporary workaround to get default max age
+	cc := ParseCacheControl(origin.DefaultCacheControl)
+	var defaultMaxAge time.Duration
+	if defaultMaxAgeStr, ok := cc.Get("s-maxage"); ok && defaultMaxAgeStr != "" {
+		defaultMaxAge, err = time.ParseDuration(defaultMaxAgeStr + "s")
+		if err != nil {
+			panic(err)
+		}
 	}
-	switch *provider {
+
+	conf := Config{
+		DefaultMaxAge:  defaultMaxAge,
+		DisableUpdates: origin.DisableUpdate,
+		Methods:        origin.SafeMethods,
+	}
+	switch config.Provider {
 	case "sqlite":
 		conf.Cache = NewSQLiteCache()
 	case "memory":
 		conf.Cache = NewMemCache()
 	default:
-		panic(fmt.Sprintf("Unsupported cache provider: %s", *provider))
-	}
-	if *methods != "" {
-		conf.Methods = strings.Split(*methods, ",")
+		panic(fmt.Sprintf("Unsupported cache provider: %s", config.Provider))
 	}
 	acache := New(conf)
 
-	downstreamURL, err := url.Parse(*downstream)
+	downstreamURL, err := url.Parse(origin.Origin)
 	if err != nil {
 		panic(err)
 	}
@@ -92,8 +96,8 @@ func main() {
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	})
-	log.Info().Msgf("Proxying port %s to %s", *port, downstreamURL)
-	err = http.ListenAndServe(":"+*port, acache.Middleware(handler))
+	log.Info().Msgf("Proxying port %v to %s", config.Port, downstreamURL)
+	err = http.ListenAndServe(fmt.Sprintf(":%d", config.Port), acache.Middleware(handler))
 	if err != nil {
 		panic(err)
 	}

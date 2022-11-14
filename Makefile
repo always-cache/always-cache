@@ -2,7 +2,7 @@
 export CGO_ENABLED=0
 
 dev:
-	gow -s run . --downstream https://ericselin.dev --no-update --provider memory
+	gow -s -e yml run .
 
 build:
 	GOOS=linux GOARCH=amd64 go build -o acache
