@@ -44,19 +44,13 @@ func main() {
 
 	acache := AlwaysCache{}
 
-	// temporary workaround to get default max age
-	acache.defaults.cacheControl = origin.Defaults.CacheControl
-
 	// if updates not disabled, update every minute
 	if !origin.DisableUpdate {
 		acache.updateTimeout = time.Minute
 	}
 
-	// process safe headers
-	acache.defaults.methods = make(map[string]struct{})
-	for _, method := range origin.Defaults.SafeMethods {
-		acache.defaults.methods[method] = struct{}{}
-	}
+	// set defaults to configured origin defaults
+	acache.defaults = origin.Defaults
 
 	// use configured provider, panic if none specified
 	switch config.Provider {

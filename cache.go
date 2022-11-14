@@ -26,11 +26,24 @@ type AlwaysCache struct {
 	next          http.Handler
 	updateTimeout time.Duration
 	defaults      Defaults
+	paths         []struct {
+		prefix   string
+		defaults Defaults
+	}
 }
 
 type Defaults struct {
-	cacheControl string
-	methods      map[string]struct{}
+	CacheControl string      `yaml:"cacheControl"`
+	SafeMethods  SafeMethods `yaml:"safeMethods"`
+}
+
+type SafeMethods struct {
+	m map[string]struct{}
+}
+
+func (m SafeMethods) Has(method string) bool {
+	_, ok := m.m[method]
+	return ok
 }
 
 // Middleware returns a new instance of AlwaysCache.
@@ -160,7 +173,7 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 
 	cacheControl := rw.Header().Get("Cache-Control")
 	if cacheControl == "" {
-		cacheControl = a.defaults.cacheControl
+		cacheControl = a.defaults.CacheControl
 	}
 	cc := ParseCacheControl(cacheControl)
 
@@ -253,7 +266,7 @@ func (a *AlwaysCache) shouldBypass(r *http.Request) string {
 
 // isCacheable checks if the request is cachable.
 func (a *AlwaysCache) isCacheable(r *http.Request) bool {
-	if _, ok := a.defaults.methods["POST"]; ok && r.Method == "POST" {
+	if a.defaults.SafeMethods.Has(r.Method) {
 		return true
 	}
 
