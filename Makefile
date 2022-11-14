@@ -2,7 +2,7 @@
 export CGO_ENABLED=0
 
 dev:
-	gow -s -e yml run .
+	gow -s -e go,mod,yml run .
 
 build:
 	GOOS=linux GOARCH=amd64 go build -o acache

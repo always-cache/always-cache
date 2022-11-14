@@ -42,31 +42,40 @@ func main() {
 
 	origin := config.Origins[0]
 
+	acache := AlwaysCache{}
+
 	// temporary workaround to get default max age
 	cc := ParseCacheControl(origin.DefaultCacheControl)
-	var defaultMaxAge time.Duration
 	if defaultMaxAgeStr, ok := cc.Get("s-maxage"); ok && defaultMaxAgeStr != "" {
-		defaultMaxAge, err = time.ParseDuration(defaultMaxAgeStr + "s")
+		defaultMaxAge, err := time.ParseDuration(defaultMaxAgeStr + "s")
 		if err != nil {
 			panic(err)
 		}
+		acache.defaultMaxAge = defaultMaxAge
 	}
 
-	conf := Config{
-		DefaultMaxAge:  defaultMaxAge,
-		DisableUpdates: origin.DisableUpdate,
-		Methods:        origin.SafeMethods,
+	// if updates not disabled, update every minute
+	if !origin.DisableUpdate {
+		acache.updateTimeout = time.Minute
 	}
+
+	// process safe headers
+	acache.methods = make(map[string]struct{})
+	for _, method := range origin.SafeMethods {
+		acache.methods[method] = struct{}{}
+	}
+
+	// use configured provider, panic if none specified
 	switch config.Provider {
 	case "sqlite":
-		conf.Cache = NewSQLiteCache()
+		acache.cache = NewSQLiteCache()
 	case "memory":
-		conf.Cache = NewMemCache()
+		acache.cache = NewMemCache()
 	default:
 		panic(fmt.Sprintf("Unsupported cache provider: %s", config.Provider))
 	}
-	acache := New(conf)
 
+	// get the downstream server address
 	downstreamURL, err := url.Parse(origin.Origin)
 	if err != nil {
 		panic(err)

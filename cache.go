@@ -22,45 +22,11 @@ import (
 )
 
 type AlwaysCache struct {
-	cache          CacheProvider
-	next           http.Handler
-	defaultMaxAge  time.Duration
-	updateTimeout  time.Duration
-	errorHandler   func(err error)
-	disableUpdates bool
-	methods        map[string]struct{}
-}
-
-type Config struct {
-	Cache          CacheProvider
-	DefaultMaxAge  time.Duration
-	UpdateTimeout  time.Duration
-	ErrorHandler   func(err error)
-	DisableUpdates bool
-	Methods        []string
-}
-
-// NewAlwaysCache instantiates an AlwaysCache with the given config.
-// The returned `AlwaysCache` is a `http.Handler` and can be used as a middleware.
-func New(c Config) *AlwaysCache {
-	acache := AlwaysCache{
-		cache:          c.Cache,
-		defaultMaxAge:  c.DefaultMaxAge,
-		updateTimeout:  c.UpdateTimeout,
-		errorHandler:   c.ErrorHandler,
-		disableUpdates: c.DisableUpdates,
-	}
-	if acache.cache == nil {
-		acache.cache = NewMemCache()
-	}
-	if acache.updateTimeout == 0 {
-		acache.updateTimeout = time.Minute
-	}
-	acache.methods = make(map[string]struct{})
-	for _, method := range c.Methods {
-		acache.methods[method] = struct{}{}
-	}
-	return &acache
+	cache         CacheProvider
+	next          http.Handler
+	defaultMaxAge time.Duration
+	updateTimeout time.Duration
+	methods       map[string]struct{}
 }
 
 // Middleware returns a new instance of AlwaysCache.
@@ -69,7 +35,7 @@ func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
 	// set downstream handler
 	a.next = next
 	// start a goroutine to update expired entries
-	if !a.disableUpdates {
+	if a.updateTimeout != 0 {
 		go a.updateCache()
 	}
 	return a
@@ -98,9 +64,6 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				logger.Error().Err(err).Str("key", key).Msg("Could not read from cache")
 				a.next.ServeHTTP(w, r)
 				a.cache.Purge(key)
-				if a.errorHandler != nil {
-					a.errorHandler(err)
-				}
 				return
 			}
 			copyHeadersTo(w.Header(), resp.Header)
@@ -174,9 +137,6 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 	if doCache, expiry := a.shouldCache(rw); doCache {
 		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
 			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
-			if a.errorHandler != nil {
-				a.errorHandler(err)
-			}
 			return false, err
 		}
 		logger.Trace().Str("key", key).Time("expiry", expiry).Msg("Cache write")
@@ -223,7 +183,7 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 		return false, time.Time{}
 	}
 	// do not cache if max age less than update interval
-	if !a.disableUpdates && maxAge < a.updateTimeout {
+	if maxAge < a.updateTimeout {
 		log.Trace().Msgf("Max age %s less than update timeout %s", maxAge, a.updateTimeout)
 		return false, time.Time{}
 	}
@@ -244,9 +204,6 @@ func (a *AlwaysCache) updateCache() {
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
-			if a.errorHandler != nil {
-				a.errorHandler(err)
-			}
 			time.Sleep(a.updateTimeout)
 			continue
 		}
