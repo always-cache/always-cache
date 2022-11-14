@@ -80,6 +80,13 @@ func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger := getLogger(r)
 
+	if fwdToken := a.shouldBypass(r); fwdToken != "" {
+		// TODO this header should be added after potential other cache-status headers
+		w.Header().Add("Cache-Status", fmt.Sprintf("Always-Cache; fwd=%s", fwdToken))
+		a.next.ServeHTTP(w, r)
+		return
+	}
+
 	if a.isCacheable(r) {
 		key := getKey(r)
 		// check if we have a cached version
@@ -267,11 +274,24 @@ func (a *AlwaysCache) updateCache() {
 	}
 }
 
+// shouldBypass provides a very early hint that the request should be completely
+// disregarded by the cache, and should just be passed along without any processing
+// I.e. bypass cache completely.
+// Returns a non-empty string containing the forward reason if cache should be bypassed.
+func (a *AlwaysCache) shouldBypass(r *http.Request) string {
+	if r.Header.Get("Authorization") != "" {
+		return "method"
+	}
+
+	return ""
+}
+
 // isCacheable checks if the request is cachable.
 func (a *AlwaysCache) isCacheable(r *http.Request) bool {
 	if _, ok := a.methods["POST"]; ok && r.Method == "POST" {
 		return true
 	}
+
 	return r.Method == "GET"
 }
 
