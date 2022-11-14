@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,33 +69,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	acache.originURL = downstreamURL
 
-	client := &http.Client{
-		// do not follow redirects
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	// initialize
+	acache.Init()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		req, err := http.NewRequest(r.Method, downstreamURL.String()+r.URL.RequestURI(), r.Body)
-		copyHeader(req.Header, r.Header)
-		req.Header.Set("Host", downstreamURL.Host)
-		if err != nil {
-			panic(err)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			panic(err)
-		}
-		defer resp.Body.Close()
-
-		copyHeader(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
-	})
 	log.Info().Msgf("Proxying port %v to %s", config.Port, downstreamURL)
-	err = http.ListenAndServe(fmt.Sprintf(":%d", config.Port), acache.Middleware(handler))
+	err = http.ListenAndServe(fmt.Sprintf(":%d", config.Port), &acache)
 	if err != nil {
 		panic(err)
 	}

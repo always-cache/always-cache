@@ -23,10 +23,11 @@ import (
 
 type AlwaysCache struct {
 	cache         CacheProvider
-	next          http.Handler
+	originURL     *url.URL
 	updateTimeout time.Duration
 	defaults      Defaults
 	paths         []Path
+	client        http.Client
 }
 
 type Path struct {
@@ -48,16 +49,22 @@ func (m SafeMethods) Has(method string) bool {
 	return ok
 }
 
-// Middleware returns a new instance of AlwaysCache.
-// AlwaysCache itself is a http.Handler, so it can be used as a middleware.
-func (a *AlwaysCache) Middleware(next http.Handler) http.Handler {
-	// set downstream handler
-	a.next = next
+// Init initializes the always-cache instance.
+// It starts the needed background processes
+// and sets up the needed variables
+func (a *AlwaysCache) Init() {
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
 		go a.updateCache()
 	}
-	return a
+
+	// create client instance to use for origin requests
+	a.client = http.Client{
+		// do not follow redirects
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // ServeHTTP implements the http.Handler interface.
@@ -68,13 +75,15 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if fwdToken := a.shouldBypass(r); fwdToken != "" {
 		// TODO this header should be added after potential other cache-status headers
 		w.Header().Add("Cache-Status", fmt.Sprintf("Always-Cache; fwd=%s", fwdToken))
-		a.next.ServeHTTP(w, r)
+		err := a.bypass(w, r)
+		if err != nil {
+			http.Error(w, "Could not get response", http.StatusBadGateway)
+		}
 		return
 	}
 
 	// TODO defaults from path matches (that we get here) are not used yet!
-	defaults := a.getDefaults(r)
-	log.Trace().Msgf("Defaults: %+v", defaults)
+	// defaults := a.getDefaults(r)
 
 	if a.isCacheable(r) {
 		key := getKey(r)
@@ -85,7 +94,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				// in case we have a corrupted cache entry, we delete it and serve the request
 				logger.Error().Err(err).Str("key", key).Msg("Could not read from cache")
-				a.next.ServeHTTP(w, r)
+				a.bypass(w, r)
 				a.cache.Purge(key)
 				return
 			}
@@ -98,7 +107,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		rw := NewResponseSaver(w)
-		a.next.ServeHTTP(rw, r)
+		a.bypass(rw, r)
 		// update cache for the GET of the same URL
 		logger.Trace().Str("path", r.URL.Path).Msg("Updating cache for self")
 		req, _ := http.NewRequest("GET", r.URL.RequestURI(), nil)
@@ -119,6 +128,34 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// fetch the resource specified in the incoming request from the origin
+func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
+	req, err := http.NewRequest(r.Method, a.originURL.String()+r.URL.RequestURI(), r.Body)
+	copyHeader(req.Header, r.Header)
+	req.Header.Set("Host", a.originURL.Host)
+	if err != nil {
+		panic(err)
+	}
+	return a.client.Do(req)
+}
+
+// bypass just pipes the original request through to the origin and immediately responds to the client
+func (a *AlwaysCache) bypass(w http.ResponseWriter, r *http.Request) error {
+	res, err := a.fetch(r)
+	if err != nil {
+		return err
+	}
+	return send(w, res)
+}
+
+func send(w http.ResponseWriter, r *http.Response) error {
+	defer r.Body.Close()
+	copyHeader(w.Header(), r.Header)
+	w.WriteHeader(r.StatusCode)
+	_, err := io.Copy(w, r.Body)
+	return err
 }
 
 // getURL returns the URL to update the cache for from the `Cache-Update` header parameter.
@@ -155,7 +192,7 @@ func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger
 	// need to get key before calling next, because next might change the request, and will definitely read the body
 	key := getKey(r)
 
-	a.next.ServeHTTP(rw, r)
+	a.bypass(rw, r)
 
 	if doCache, expiry := a.shouldCache(rw); doCache {
 		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
@@ -202,8 +239,6 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 			maxAge = duration
 		}
 	}
-
-	log.Trace().Msgf("Max age %s", maxAge.String())
 
 	// do not cache if max-age not set
 	if maxAge == 0 {
