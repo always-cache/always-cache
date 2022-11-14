@@ -6,28 +6,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type ConfigFile struct {
-	Port     int      `yaml:"port"`
-	Provider string   `yaml:"provider"`
-	Origins  []Origin `yaml:"origins"`
+type Config struct {
+	Port     int            `yaml:"port"`
+	Provider string         `yaml:"provider"`
+	Origins  []ConfigOrigin `yaml:"origins"`
 }
 
-type Origin struct {
-	Origin              string   `yaml:"origin"`
-	Host                string   `yaml:"host"`
-	DefaultCacheControl string   `yaml:"defaultCacheControl"`
-	DisableUpdate       bool     `yaml:"disableUpdate"`
-	SafeMethods         []string `yaml:"safeMethods"`
-	Paths               []Path   `yaml:"paths"`
+type ConfigOrigin struct {
+	Origin        string         `yaml:"origin"`
+	Host          string         `yaml:"host"`
+	DisableUpdate bool           `yaml:"disableUpdate"`
+	Defaults      ConfigDefaults `yaml:"defaults"`
+	Paths         []ConfigPath   `yaml:"paths"`
 }
 
-type Path struct {
+type ConfigDefaults struct {
+	CacheControl string   `yaml:"cacheControl"`
+	SafeMethods  []string `yaml:"safeMethods"`
+}
+
+type ConfigPath struct {
 	Prefix              string `yaml:"prefix"`
 	DefaultCacheControl string `yaml:"defaultCacheControl"`
 }
 
-func getConfig(filename string) (ConfigFile, error) {
-	var config ConfigFile
+func getConfig(filename string) (Config, error) {
+	var config Config
 	configBytes, err := os.ReadFile(filename)
 	if err != nil {
 		return config, err

@@ -45,14 +45,7 @@ func main() {
 	acache := AlwaysCache{}
 
 	// temporary workaround to get default max age
-	cc := ParseCacheControl(origin.DefaultCacheControl)
-	if defaultMaxAgeStr, ok := cc.Get("s-maxage"); ok && defaultMaxAgeStr != "" {
-		defaultMaxAge, err := time.ParseDuration(defaultMaxAgeStr + "s")
-		if err != nil {
-			panic(err)
-		}
-		acache.defaultMaxAge = defaultMaxAge
-	}
+	acache.defaults.cacheControl = origin.Defaults.CacheControl
 
 	// if updates not disabled, update every minute
 	if !origin.DisableUpdate {
@@ -60,9 +53,9 @@ func main() {
 	}
 
 	// process safe headers
-	acache.methods = make(map[string]struct{})
-	for _, method := range origin.SafeMethods {
-		acache.methods[method] = struct{}{}
+	acache.defaults.methods = make(map[string]struct{})
+	for _, method := range origin.Defaults.SafeMethods {
+		acache.defaults.methods[method] = struct{}{}
 	}
 
 	// use configured provider, panic if none specified

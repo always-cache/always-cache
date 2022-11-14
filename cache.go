@@ -24,9 +24,13 @@ import (
 type AlwaysCache struct {
 	cache         CacheProvider
 	next          http.Handler
-	defaultMaxAge time.Duration
 	updateTimeout time.Duration
-	methods       map[string]struct{}
+	defaults      Defaults
+}
+
+type Defaults struct {
+	cacheControl string
+	methods      map[string]struct{}
 }
 
 // Middleware returns a new instance of AlwaysCache.
@@ -154,22 +158,26 @@ func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
 		return false, time.Time{}
 	}
 
-	cacheControl := ParseCacheControl(rw.Header().Get("Cache-Control"))
+	cacheControl := rw.Header().Get("Cache-Control")
+	if cacheControl == "" {
+		cacheControl = a.defaults.cacheControl
+	}
+	cc := ParseCacheControl(cacheControl)
 
 	// should not cache if no-cache set
-	if _, ok := cacheControl.Get("no-cache"); ok {
+	if _, ok := cc.Get("no-cache"); ok {
 		return false, time.Time{}
 	}
 
 	// get max age in order: s-maxage, max-age, DEFAULT
 	var maxAgeStr string
-	if val, ok := cacheControl.Get("s-maxage"); ok {
+	if val, ok := cc.Get("s-maxage"); ok {
 		maxAgeStr = val
-	} else if val, ok := cacheControl.Get("max-age"); ok {
+	} else if val, ok := cc.Get("max-age"); ok {
 		maxAgeStr = val
 	}
 
-	maxAge := a.defaultMaxAge
+	var maxAge time.Duration
 	if maxAgeStr != "" {
 		if duration, err := time.ParseDuration(maxAgeStr + "s"); err == nil {
 			maxAge = duration
@@ -245,7 +253,7 @@ func (a *AlwaysCache) shouldBypass(r *http.Request) string {
 
 // isCacheable checks if the request is cachable.
 func (a *AlwaysCache) isCacheable(r *http.Request) bool {
-	if _, ok := a.methods["POST"]; ok && r.Method == "POST" {
+	if _, ok := a.defaults.methods["POST"]; ok && r.Method == "POST" {
 		return true
 	}
 
