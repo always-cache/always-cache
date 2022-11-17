@@ -42,8 +42,5 @@ func getConfig(filename string) (Config, error) {
 		return config, err
 	}
 	err = yaml.Unmarshal(configBytes, &config)
-	if err != nil {
-		return config, err
-	}
 	return config, nil
 }

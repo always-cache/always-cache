@@ -41,6 +41,10 @@ func main() {
 
 	origin := config.Origins[0]
 
+	if len(origin.Paths) > 0 {
+		log.Fatal().Msg("Path-based overrides not yet supported")
+	}
+
 	acache := AlwaysCache{}
 
 	// if updates not disabled, update every minute

@@ -53,6 +53,7 @@ func (m SafeMethods) Has(method string) bool {
 // It starts the needed background processes
 // and sets up the needed variables
 func (a *AlwaysCache) Init() {
+	log.Trace().Msgf("Defaults: %+v", a.defaults)
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
 		go a.updateCache()
@@ -70,23 +71,17 @@ func (a *AlwaysCache) Init() {
 // ServeHTTP implements the http.Handler interface.
 // It is the main entry point for the caching middleware.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// TODO change logger to instance, this always returns the global logger
 	logger := getLogger(r)
-
-	if fwdToken := a.shouldBypass(r); fwdToken != "" {
-		// TODO this header should be added after potential other cache-status headers
-		w.Header().Add("Cache-Status", fmt.Sprintf("Always-Cache; fwd=%s", fwdToken))
-		err := a.bypass(w, r)
-		if err != nil {
-			http.Error(w, "Could not get response", http.StatusBadGateway)
-		}
-		return
-	}
 
 	// TODO defaults from path matches (that we get here) are not used yet!
 	// defaults := a.getDefaults(r)
 
+	key := getKey(r)
+
+	// see if this request is cacheble, per configuration
+	// (do not send cached results even if we have a cached entry if the config changed)
 	if a.isCacheable(r) {
-		key := getKey(r)
 		// check if we have a cached version
 		if cachedResponse, ok, _ := a.cache.Get(key); ok {
 			logger.Trace().Str("key", key).Msg("Cache hit and serving")
@@ -101,33 +96,75 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			copyHeadersTo(w.Header(), resp.Header)
 			w.Header().Add("Cache-Status", "Always-Cache; hit")
 			io.Copy(w, resp.Body)
-		} else {
-			// TODO for cachable POSTs, this call will trigger another read of the body, which is not ideal
-			a.saveToCache(w, r, logger)
-		}
-	} else {
-		rw := NewResponseSaver(w)
-		a.bypass(rw, r)
-		// update cache for the GET of the same URL
-		logger.Trace().Str("path", r.URL.Path).Msg("Updating cache for self")
-		req, _ := http.NewRequest("GET", r.URL.RequestURI(), nil)
-		a.saveToCache(nil, req, logger)
-		// update cache based on cache-update header
-		for _, update := range rw.Updates() {
-			url := getURL(r, update)
-			delay := getDelay(update)
-			logger.Trace().Str("path", r.URL.Path).Dur("delay", delay).Msgf("Updating cache for %s based on header", url.Path)
-			req, _ := http.NewRequest("GET", url.Path, nil)
-			if delay > 0 {
-				go func() {
-					time.Sleep(delay)
-					a.saveToCache(nil, req, logger)
-				}()
-			} else {
-				a.saveToCache(nil, req, logger)
-			}
+			return
 		}
 	}
+
+	originResponse, err := a.fetch(r)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Trace().Msgf("Origin returned %v", originResponse.Status)
+	if cacheable, expiration := a.shouldCache(originResponse); cacheable {
+		a.save(key, originResponse, expiration)
+	}
+
+	send(w, originResponse)
+
+	if updates := getUpdates(originResponse); len(updates) > 0 {
+		a.saveUpdates(updates)
+	}
+}
+
+// TODO make this method return slice of Update objects, including path and delay
+func getUpdates(res *http.Response) []string {
+	if res.Request.Method == http.MethodGet {
+		return nil
+	}
+	updates := make([]string, 0)
+	// only auto-add self if success
+	if res.StatusCode == http.StatusOK {
+		updates = append(updates, res.Request.RequestURI)
+	}
+	for _, update := range res.Header.Values("Cache-Update") {
+		url := getURL(res.Request, update)
+		updates = append(updates, url.Path)
+	}
+	return updates
+}
+
+func (a *AlwaysCache) saveUpdates(updates []string) {
+	for _, update := range updates {
+		log.Trace().Str("update", update).Msgf("Updating cache based on header")
+		req, _ := http.NewRequest("GET", update, nil)
+		// TODO get delay and delay if needed
+		// if delay > 0 {
+		// 	go func() {
+		// 		time.Sleep(delay)
+		// 		a.saveToCache(nil, req, logger)
+		// 	}()
+		// }
+		updatedResponse, err := a.fetch(req)
+		if err != nil {
+			panic(err)
+		}
+		if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
+			a.save(getKey(req), updatedResponse, expiration)
+		}
+	}
+}
+
+func (a *AlwaysCache) save(key string, res *http.Response, exp time.Time) {
+	responseBytes, err := responseToBytes(res)
+	if err != nil {
+		panic(err)
+	}
+	if err := a.cache.Put(key, exp, responseBytes); err != nil {
+		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
+		panic(err)
+	}
+	log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
 }
 
 // fetch the resource specified in the incoming request from the origin
@@ -182,39 +219,16 @@ func getDelay(update string) time.Duration {
 	return 0
 }
 
-// saveToCache saves the response to a particular request `r` to the cache, if the response is cachable.
-// The response is also tee'd to the `w` ResponseWriter.
-// It returns a boolean indicating if the response was cached, along with a possible error.
-// It uses the underlying `next` handler to get the response.
-// `ResponseSaver` is used to save the response to the cache and to tee the response to the `w` ResponseWriter.
-func (a *AlwaysCache) saveToCache(w http.ResponseWriter, r *http.Request, logger *zerolog.Logger) (bool, error) {
-	rw := NewResponseSaver(w)
-	// need to get key before calling next, because next might change the request, and will definitely read the body
-	key := getKey(r)
-
-	a.bypass(rw, r)
-
-	if doCache, expiry := a.shouldCache(rw); doCache {
-		if err := a.cache.Put(key, expiry, rw.Response()); err != nil {
-			logger.Error().Err(err).Str("key", key).Msg("Could not write to cache")
-			return false, err
-		}
-		logger.Trace().Str("key", key).Time("expiry", expiry).Msg("Cache write")
-		return true, nil
-	}
-	logger.Trace().Str("key", key).Int("http-status", rw.StatusCode()).Msg("Non-cacheable response")
-	return false, nil
-}
-
 // shouldCache checks if the response should be cached.
 // If the response is cachable, it will return true, along with the expiration time.
-func (a *AlwaysCache) shouldCache(rw *ResponseSaver) (bool, time.Time) {
+func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	// cache only success (HTTP 200)
-	if rw.StatusCode() != http.StatusOK {
+	if res.StatusCode != http.StatusOK {
 		return false, time.Time{}
 	}
 
-	cacheControl := rw.Header().Get("Cache-Control")
+	cacheControl := res.Header.Get("Cache-Control")
+	log.Trace().Msgf("Header '%s', default '%s'", cacheControl, a.defaults.CacheControl)
 	if cacheControl == "" {
 		cacheControl = a.defaults.CacheControl
 	}
@@ -274,11 +288,11 @@ func (a *AlwaysCache) updateCache() {
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
 			log.Trace().Str("key", key).Time("expiry", expiry).Msg("Updating cache")
 			req, _ := http.NewRequest("GET", key, nil)
-			cached, err := a.saveToCache(nil, req, &log.Logger)
+			cached, err := a.saveRequest(req, key)
 			// if there was an error, sleep and retry
 			if !cached || err != nil {
 				time.Sleep(time.Second)
-				cached, err = a.saveToCache(nil, req, &log.Logger)
+				cached, err = a.saveRequest(req, key)
 			}
 			if !cached {
 				a.cache.Purge(key)
@@ -291,6 +305,18 @@ func (a *AlwaysCache) updateCache() {
 			time.Sleep(a.updateTimeout)
 		}
 	}
+}
+
+func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
+	res, err := a.fetch(req)
+	if err != nil {
+		return false, err
+	}
+	if cacheable, exp := a.shouldCache(res); cacheable {
+		a.save(key, res, exp)
+		return true, nil
+	}
+	return false, nil
 }
 
 // shouldBypass provides a very early hint that the request should be completely
@@ -307,7 +333,8 @@ func (a *AlwaysCache) shouldBypass(r *http.Request) string {
 
 // isCacheable checks if the request is cachable.
 func (a *AlwaysCache) isCacheable(r *http.Request) bool {
-	if a.defaults.SafeMethods.Has(r.Method) {
+	defaults := a.getDefaults(r)
+	if defaults.SafeMethods.Has(r.Method) {
 		return true
 	}
 
@@ -393,6 +420,23 @@ func bodyHash(r *http.Request) string {
 // bytesToResponse converts a byte slice to a http.Response.
 func bytesToResponse(b []byte) (*http.Response, error) {
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
+}
+
+// responseToBytes converts a response to a byte slice.
+// It returns the HTTP/1.1 representation of the response
+func responseToBytes(res *http.Response) ([]byte, error) {
+	// write response to buffer
+	buf := &bytes.Buffer{}
+	res.Write(buf)
+	// set response body back
+	bts := buf.Bytes()
+	clonedRes, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(bts)), res.Request)
+	if err != nil {
+		panic(err)
+	}
+	res.Body = clonedRes.Body
+	// return buffer bytes
+	return bts, nil
 }
 
 // copyHeadersTo copies the headers from one http.Header to another.
