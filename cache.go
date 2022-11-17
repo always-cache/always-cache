@@ -68,36 +68,112 @@ func (a *AlwaysCache) Init() {
 	}
 }
 
+type CacheStatusStatus string
+
+const (
+	CacheStatusHit = "hit"
+	CacheStatusFwd = "fwd"
+)
+
+type CacheStatusFwdReason string
+
+const (
+	// The cache was configured to not handle this request.
+	CacheStatusFwdBypass = "bypass"
+
+	// The request method's semantics require the request to be
+	// forwarded.
+	CacheStatusFwdMethod = "method"
+
+	// The cache did not contain any responses that matched the
+	// request URI.
+	CacheStatusFwdUriMiss = "uri-miss"
+
+	// The cache contained a response that matched the request
+	// URI, but it could not select a response based upon this request's
+	// header fields and stored Vary header fields.
+	CacheStatusFwdVaryMiss = "vary-miss"
+
+	// The cache did not contain any responses that could be used to
+	// satisfy this request (to be used when an implementation cannot
+	// distinguish between uri-miss and vary-miss).
+	CacheStatusFwdMiss = "miss"
+
+	// The cache was able to select a fresh response for the
+	// request, but the request's semantics (e.g., Cache-Control request
+	// directives) did not allow its use.
+	CacheStatusFwdRequest = "request"
+
+	// The cache was able to select a response for the request, but
+	// it was stale.
+	CacheStatusFwdStale = "stale"
+
+	// The cache was able to select a partial response for the
+	// request, but it did not contain all of the requested ranges (or
+	// the request was for the complete response).
+	CacheStatusFwdPartial = "partial"
+)
+
+type CacheStatus struct {
+	status    CacheStatusStatus
+	detail    string
+	fwdReason CacheStatusFwdReason
+}
+
+func (cs *CacheStatus) Hit() {
+	cs.status = CacheStatusHit
+}
+
+func (cs *CacheStatus) Forward(reason CacheStatusFwdReason) {
+	cs.status = CacheStatusFwd
+	cs.fwdReason = reason
+}
+
+func (cs *CacheStatus) Detail(detail string) {
+	cs.detail = detail
+}
+
+func (cs *CacheStatus) String() string {
+	status := fmt.Sprintf("Always-Cache; %s", cs.status)
+	if cs.status == "fwd" && cs.fwdReason != "" {
+		status = fmt.Sprintf("%s=%s", status, cs.fwdReason)
+	}
+	if cs.detail != "" {
+		status = status + "; detail=" + cs.detail
+	}
+	return status
+}
+
 // ServeHTTP implements the http.Handler interface.
 // It is the main entry point for the caching middleware.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// TODO change logger to instance, this always returns the global logger
-	logger := getLogger(r)
-
 	// TODO defaults from path matches (that we get here) are not used yet!
 	// defaults := a.getDefaults(r)
 
 	key := getKey(r)
+	var cacheStatus CacheStatus
 
 	// see if this request is cacheble, per configuration
 	// (do not send cached results even if we have a cached entry if the config changed)
 	if a.isCacheable(r) {
 		// check if we have a cached version
-		if cachedResponse, ok, _ := a.cache.Get(key); ok {
-			logger.Trace().Str("key", key).Msg("Cache hit and serving")
-			resp, err := bytesToResponse(cachedResponse)
-			if err != nil {
-				// in case we have a corrupted cache entry, we delete it and serve the request
-				logger.Error().Err(err).Str("key", key).Msg("Could not read from cache")
-				a.bypass(w, r)
-				a.cache.Purge(key)
+		if cachedBytes, ok, _ := a.cache.Get(key); ok {
+			log.Trace().Str("key", key).Msg("Cache hit and serving")
+			if cachedResponse, err := bytesToResponse(cachedBytes); err == nil {
+				cacheStatus.Hit()
+				send(w, cachedResponse, cacheStatus)
 				return
+			} else {
+				cacheStatus.Forward(CacheStatusFwdBypass)
+				cacheStatus.Detail("error")
+				log.Error().Err(err).Str("key", key).Msg("Could not read from cache")
+				a.cache.Purge(key)
 			}
-			copyHeadersTo(w.Header(), resp.Header)
-			w.Header().Add("Cache-Status", "Always-Cache; hit")
-			io.Copy(w, resp.Body)
-			return
+		} else {
+			cacheStatus.Forward(CacheStatusFwdMiss)
 		}
+	} else {
+		cacheStatus.Forward(CacheStatusFwdRequest)
 	}
 
 	originResponse, err := a.fetch(r)
@@ -110,7 +186,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.save(key, originResponse, expiration)
 	}
 
-	send(w, originResponse)
+	send(w, originResponse, cacheStatus)
 
 	if updates := getUpdates(originResponse); len(updates) > 0 {
 		a.saveUpdates(updates)
@@ -178,18 +254,10 @@ func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
 	return a.client.Do(req)
 }
 
-// bypass just pipes the original request through to the origin and immediately responds to the client
-func (a *AlwaysCache) bypass(w http.ResponseWriter, r *http.Request) error {
-	res, err := a.fetch(r)
-	if err != nil {
-		return err
-	}
-	return send(w, res)
-}
-
-func send(w http.ResponseWriter, r *http.Response) error {
+func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
 	defer r.Body.Close()
 	copyHeader(w.Header(), r.Header)
+	w.Header().Add("Cache-Status", status.String())
 	w.WriteHeader(r.StatusCode)
 	_, err := io.Copy(w, r.Body)
 	return err
