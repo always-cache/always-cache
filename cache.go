@@ -280,8 +280,18 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	}
 
 	var expires time.Time
+	var age time.Duration
 
-	// get max age in order: s-maxage, max-age, DEFAULT
+	// get resource age
+	if ageHeader := res.Header.Get("Age"); ageHeader != "" {
+		if seconds, err := strconv.ParseUint(ageHeader, 10, 64); err == nil {
+			age = time.Second * time.Duration(seconds)
+		} else {
+			log.Warn().Err(err).Msgf("Could not convert age %s to int", ageHeader)
+		}
+	}
+
+	// get max age in order: s-maxage, max-age
 	var maxAgeStr string
 	if val, ok := cc.Get("s-maxage"); ok {
 		maxAgeStr = val
@@ -299,8 +309,10 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	}
 
 	// if we got a max-age, set expiry as appropriate
+	// this means subract the current age to get current TTL
 	if maxAge != 0 {
-		expires = time.Now().Add(maxAge)
+		log.Trace().Msgf("Max age is %v and current age %v", maxAge, age)
+		expires = time.Now().Add(maxAge - age)
 	}
 
 	// if no max age specified, see if we have expires header
