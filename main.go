@@ -78,11 +78,12 @@ func main() {
 	}
 	acache.originURL = downstreamURL
 
-	// initialize
-	acache.Init()
+	// set the port to listen on
+	acache.port = config.Port
 
-	log.Info().Msgf("Proxying port %v to %s", config.Port, downstreamURL)
-	err = http.ListenAndServe(fmt.Sprintf(":%d", config.Port), &acache)
+	// initialize
+	err = acache.Run()
+
 	if err != nil {
 		panic(err)
 	}

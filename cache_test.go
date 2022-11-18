@@ -1,13 +1,49 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
+
+func init() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+}
+
+func startTestServer(handler *http.ServeMux, port int) (AlwaysCache, *http.Server) {
+	// start server
+	server := http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: handler,
+	}
+	go func() {
+		err := server.ListenAndServe()
+		if err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
+	// start set up acache
+	url, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
+	acache := AlwaysCache{
+		cache:         NewMemCache(),
+		originURL:     url,
+		updateTimeout: time.Second / 2,
+	}
+	acache.init()
+	// wait a small while to ensure server is up
+	time.Sleep(time.Millisecond * 200)
+
+	return acache, &server
+}
 
 func TestCacheUpdate(t *testing.T) {
 	mux := http.NewServeMux()
@@ -18,21 +54,23 @@ func TestCacheUpdate(t *testing.T) {
 	var handleCount int
 	mux.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) {
 		handleCount++
+		w.Header().Add("Cache-Control", "max-age=60")
 		w.Write([]byte(fmt.Sprintf("Called %d times", handleCount)))
 	})
-	mw := New(Config{}).Middleware(mux)
 	req, _ := http.NewRequest("POST", "/update", nil)
 	countReq, _ := http.NewRequest("GET", "/count", nil)
 
+	acache, server := startTestServer(mux, 9001)
 	rr := httptest.NewRecorder()
 
-	mw.ServeHTTP(httptest.NewRecorder(), countReq)
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-	mw.ServeHTTP(rr, countReq)
+	acache.ServeHTTP(httptest.NewRecorder(), countReq)
+	acache.ServeHTTP(httptest.NewRecorder(), req)
+	acache.ServeHTTP(rr, countReq)
 
 	if body, err := io.ReadAll(rr.Result().Body); err != nil || fmt.Sprintf("%s", body) != "Called 2 times" {
 		t.Fatalf("Body is %s", body)
 	}
+	server.Shutdown(context.Background())
 }
 
 func TestUpdateOnPost(t *testing.T) {
@@ -44,11 +82,14 @@ func TestUpdateOnPost(t *testing.T) {
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleCount++
+		w.Header().Add("Cache-Control", "max-age=60")
 		w.Write([]byte(fmt.Sprintf("So you wanted to %s?", r.Method)))
 	})
 	get, _ := http.NewRequest("GET", "/", nil)
 	post, _ := http.NewRequest("POST", "/", nil)
-	mw := New(Config{}).Middleware(handler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handler)
+	mw, server := startTestServer(mux, 9002)
 
 	mw.ServeHTTP(httptest.NewRecorder(), get)
 	assertCount(1)
@@ -59,6 +100,8 @@ func TestUpdateOnPost(t *testing.T) {
 	assertCount(3)
 	mw.ServeHTTP(httptest.NewRecorder(), get)
 	assertCount(3)
+
+	server.Shutdown(context.Background())
 }
 
 func TestUpdateBeforeResponding(t *testing.T) {
@@ -66,6 +109,7 @@ func TestUpdateBeforeResponding(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/list", func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Second)
+		w.Header().Add("Cache-Control", "max-age=60")
 		w.Write([]byte(fmt.Sprintf("%d elements", listCount)))
 	})
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +122,7 @@ func TestUpdateBeforeResponding(t *testing.T) {
 			w.Write([]byte("nothing to do on get"))
 		}
 	})
-	mw := New(Config{}).Middleware(mux)
+	mw, server := startTestServer(mux, 9003)
 
 	rr := httptest.NewRecorder()
 	mw.ServeHTTP(rr, httptest.NewRequest("GET", "/list", nil))
@@ -93,6 +137,8 @@ func TestUpdateBeforeResponding(t *testing.T) {
 	if body := rr.Body.String(); body != "1 elements" {
 		t.Fatalf("body is %s", body)
 	}
+
+	server.Shutdown(context.Background())
 }
 
 // TestMaxAgeUpdate tests that the cache is updated when the max-age is reached.
@@ -114,7 +160,9 @@ func TestMaxAgeUpdate(t *testing.T) {
 		w.Header().Add("cache-control", "max-age=1")
 		w.Write([]byte(response))
 	})
-	mw := New(Config{UpdateTimeout: time.Second / 2}).Middleware(handler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handler)
+	mw, server := startTestServer(mux, 9004)
 	req, _ := http.NewRequest("GET", "/", nil)
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
@@ -127,6 +175,8 @@ func TestMaxAgeUpdate(t *testing.T) {
 	if body := rr.Body.String(); body != "Hello world 2" {
 		t.Fatalf("body is %s", body)
 	}
+
+	server.Shutdown(context.Background())
 }
 
 // TestUpdateDelay tests that the `delay` directive works as expected.
@@ -144,6 +194,7 @@ func TestUpdateDelay(t *testing.T) {
 	response := "Hello world"
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Cache-Control", "max-age=60")
 		if response == "" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -158,7 +209,7 @@ func TestUpdateDelay(t *testing.T) {
 			http.Error(w, "nothing to do on get", http.StatusMethodNotAllowed)
 		}
 	})
-	mw := New(Config{}).Middleware(mux)
+	mw, server := startTestServer(mux, 9005)
 	get, _ := http.NewRequest("GET", "/", nil)
 	post, _ := http.NewRequest("POST", "/update", nil)
 	rr := httptest.NewRecorder()
@@ -175,4 +226,6 @@ func TestUpdateDelay(t *testing.T) {
 	if body := rr.Body.String(); body != "Hello world 2" {
 		t.Fatalf("body is %s", body)
 	}
+
+	server.Shutdown(context.Background())
 }

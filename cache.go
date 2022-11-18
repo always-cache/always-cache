@@ -221,40 +221,55 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO make this method return slice of Update objects, including path and delay
-func getUpdates(res *http.Response) []string {
+type CacheUpdate struct {
+	Path  string
+	Delay time.Duration
+}
+
+func getUpdates(res *http.Response) []CacheUpdate {
 	if res.Request.Method == http.MethodGet {
 		return nil
 	}
-	updates := make([]string, 0)
+	updates := make([]CacheUpdate, 0)
 	// only auto-add self if success
 	if res.StatusCode == http.StatusOK {
-		updates = append(updates, res.Request.RequestURI)
+		updates = append(updates, CacheUpdate{Path: res.Request.RequestURI})
 	}
 	for _, update := range res.Header.Values("Cache-Update") {
-		url := getURL(res.Request, update)
-		updates = append(updates, url.Path)
+		cu := CacheUpdate{}
+		// path is the first element
+		path := strings.Split(update, ";")[0]
+		cu.Path = getURL(res.Request, path).Path
+		cu.Delay = getDelay(update)
+
+		updates = append(updates, cu)
 	}
 	return updates
 }
 
-func (a *AlwaysCache) saveUpdates(updates []string) {
+func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 	for _, update := range updates {
-		log.Trace().Str("update", update).Msgf("Updating cache based on header")
-		req, _ := http.NewRequest("GET", update, nil)
-		// TODO get delay and delay if needed
-		// if delay > 0 {
-		// 	go func() {
-		// 		time.Sleep(delay)
-		// 		a.saveToCache(nil, req, logger)
-		// 	}()
-		// }
-		updatedResponse, err := a.fetch(req)
-		if err != nil {
-			panic(err)
-		}
-		if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
-			a.save(getKey(req), updatedResponse, expiration)
+		log.Trace().Str("update", update.Path).Msgf("Updating cache based on header")
+		req, _ := http.NewRequest("GET", update.Path, nil)
+		if update.Delay > 0 {
+			go func() {
+				time.Sleep(update.Delay)
+				updatedResponse, err := a.fetch(req)
+				if err != nil {
+					panic(err)
+				}
+				if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
+					a.save(getKey(req), updatedResponse, expiration)
+				}
+			}()
+		} else {
+			updatedResponse, err := a.fetch(req)
+			if err != nil {
+				panic(err)
+			}
+			if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
+				a.save(getKey(req), updatedResponse, expiration)
+			}
 		}
 	}
 }
@@ -470,8 +485,8 @@ func getKey(r *http.Request) string {
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
 			return r.URL.RequestURI() + ":" + multipartHash
-		} else {
-			return r.URL.RequestURI() + ":" + bodyHash(r)
+		} else if bodyHash := bodyHash(r); bodyHash != "" {
+			return r.URL.RequestURI() + ":" + bodyHash
 		}
 	}
 	return r.URL.RequestURI()
@@ -510,6 +525,9 @@ func multipartHash(r *http.Request) string {
 // bodyHash returns the hash of a request body.
 // When it returns, the request body will be rewound to the beginning.
 func bodyHash(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		panic(err)
