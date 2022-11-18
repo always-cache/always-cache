@@ -21,6 +21,8 @@ import (
 )
 
 type AlwaysCache struct {
+	initialized   bool
+	port          int
 	cache         CacheProvider
 	originURL     *url.URL
 	updateTimeout time.Duration
@@ -51,7 +53,12 @@ func (m SafeMethods) Has(method string) bool {
 // Init initializes the always-cache instance.
 // It starts the needed background processes
 // and sets up the needed variables
-func (a *AlwaysCache) Init() {
+func (a *AlwaysCache) init() {
+	if a.initialized {
+		return
+	}
+	a.initialized = true
+
 	log.Trace().Msgf("Defaults: %+v", a.defaults)
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
@@ -65,6 +72,14 @@ func (a *AlwaysCache) Init() {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+func (a *AlwaysCache) Run() error {
+	// initialize
+	a.init()
+	// start the server
+	log.Info().Msgf("Proxying port %v to %s", a.port, a.originURL)
+	return http.ListenAndServe(fmt.Sprintf(":%d", a.port), a)
 }
 
 type CacheStatusStatus string

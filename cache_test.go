@@ -7,73 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/go-chi/chi/v5"
 )
-
-func TestMiddlewareReturnsResponse(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello world"))
-	})
-	req, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-
-	New(Config{}).Middleware(handler).ServeHTTP(rr, req)
-
-	if body, err := io.ReadAll(rr.Result().Body); err != nil || fmt.Sprintf("%s", body) != "Hello world" {
-		t.Fatalf("Body is %s", body)
-	}
-}
-
-func TestMiddlewareReturnsSecondRequestFromCache(t *testing.T) {
-	var handleCount int
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleCount++
-		w.Write([]byte("Hello world"))
-	})
-	req, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	mw := New(Config{}).Middleware(handler)
-
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-	mw.ServeHTTP(rr, req)
-
-	if handleCount != 1 {
-		t.Fatalf("Next handler called %d times", handleCount)
-	}
-	if body, err := io.ReadAll(rr.Result().Body); err != nil || fmt.Sprintf("%s", body) != "Hello world" {
-		t.Fatalf("Body is %s", body)
-	}
-}
-
-func TestCacheHeaders(t *testing.T) {
-	var handleCount int
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleCount++
-		w.Header().Add("content-type", "text/test")
-		w.Write([]byte("Hello world"))
-	})
-	req, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	mw := New(Config{}).Middleware(handler)
-
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-	mw.ServeHTTP(rr, req)
-
-	if ct := rr.Result().Header.Get("content-type"); ct != "text/test" {
-		body, _ := io.ReadAll(rr.Result().Body)
-		t.Fatalf("Content-Type header is %s with body %s", ct, body)
-	}
-}
 
 func TestCacheUpdate(t *testing.T) {
 	mux := http.NewServeMux()
@@ -161,24 +95,6 @@ func TestUpdateBeforeResponding(t *testing.T) {
 	}
 }
 
-func TestCacheOnlySuccess(t *testing.T) {
-	handleCount := 0
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleCount++
-		w.WriteHeader(http.StatusAccepted)
-		w.Write([]byte("Hello world"))
-	})
-	req, _ := http.NewRequest("GET", "/", nil)
-	mw := New(Config{}).Middleware(handler)
-
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-	mw.ServeHTTP(httptest.NewRecorder(), req)
-
-	if handleCount != 2 {
-		t.Fatalf("Handler called %d times", handleCount)
-	}
-}
-
 // TestMaxAgeUpdate tests that the cache is updated when the max-age is reached.
 // This is done by setting the max-age to 1 second and the update timeout to 0.5 seconds.
 //
@@ -258,35 +174,5 @@ func TestUpdateDelay(t *testing.T) {
 
 	if body := rr.Body.String(); body != "Hello world 2" {
 		t.Fatalf("body is %s", body)
-	}
-}
-
-func TestChiMiddleware(t *testing.T) {
-	listLength := 0
-	r := chi.NewRouter()
-	r.Get("/chi", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(fmt.Sprintf("List %d items", listLength)))
-	})
-	r.Get("/chi-list", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(fmt.Sprintf("List %d items", listLength)))
-	})
-	r.Post("/chi", func(w http.ResponseWriter, r *http.Request) {
-		listLength++
-		w.Header().Add("cache-update", "/chi-list")
-		w.Write([]byte("post"))
-	})
-	handler := New(Config{}).Middleware(r)
-
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/chi", nil))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/chi", nil))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/chi", nil))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/chi", nil))
-
-	if rec.Result().StatusCode != http.StatusOK {
-		t.Fatalf("Status code is %d", rec.Result().StatusCode)
-	}
-	if rec.Body.String() != "List 1 items" {
-		t.Fatalf("body is %s", rec.Body.String())
 	}
 }
