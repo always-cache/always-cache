@@ -291,8 +291,10 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	var maxAge time.Duration
 	if maxAgeStr != "" {
-		if duration, err := time.ParseDuration(maxAgeStr + "s"); err == nil {
-			maxAge = duration
+		if seconds, err := strconv.ParseUint(maxAgeStr, 10, 64); err == nil {
+			maxAge = time.Second * time.Duration(seconds)
+		} else {
+			log.Warn().Err(err).Msgf("Could not convert max age %s to int", maxAgeStr)
 		}
 	}
 
