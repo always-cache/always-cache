@@ -1,0 +1,5 @@
+port: 8080
+provider: memory
+origins:
+  - origin: http://localhost:8000
+    disableUpdate: true

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -28,6 +29,8 @@ func copyHeader(dst, src http.Header) {
 func main() {
 	configFile := flag.String("config", "config.yml", "Path to config file")
 	flag.Parse()
+
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
 
 	config, err := getConfig(*configFile)
 	if err != nil {

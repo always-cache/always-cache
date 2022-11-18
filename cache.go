@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"fmt"
@@ -150,8 +149,16 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// TODO defaults from path matches (that we get here) are not used yet!
 	// defaults := a.getDefaults(r)
 
+	log.Trace().Interface("headers", r.Header).Msgf("Incoming request: %s %s", r.Method, r.URL.Path)
+
 	key := getKey(r)
+
+	log := log.With().Str("key", key).Logger()
 	var cacheStatus CacheStatus
+
+	if testId := r.Header.Get("test-id"); testId != "" {
+		log.Debug().Str("testId", testId).Msg("Request for test")
+	}
 
 	// see if this request is cacheble, per configuration
 	// (do not send cached results even if we have a cached entry if the config changed)
@@ -176,12 +183,18 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cacheStatus.Forward(CacheStatusFwdRequest)
 	}
 
+	log.Trace().Msg("Forwarding to origin")
+
 	originResponse, err := a.fetch(r)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Trace().Msgf("Origin returned %v", originResponse.Status)
+	log.Trace().Msg("Got response from origin")
+
+	// remove connection header from the response
+	originResponse.Header.Del("Connection")
+
 	if cacheable, expiration := a.shouldCache(originResponse); cacheable {
 		a.save(key, originResponse, expiration)
 	}
@@ -248,18 +261,24 @@ func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
 	req, err := http.NewRequest(r.Method, a.originURL.String()+r.URL.RequestURI(), r.Body)
 	copyHeader(req.Header, r.Header)
 	req.Header.Set("Host", a.originURL.Host)
+	// do not forward connection header, this causes trouble
+	// bug surfaced it cache-tests headers-store-Connection test
+	req.Header.Del("Connection")
 	if err != nil {
 		panic(err)
 	}
+	log.Trace().Msgf("Executing request %+v", *req)
 	return a.client.Do(req)
 }
 
 func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
+	log.Trace().Msg("Sending response")
 	defer r.Body.Close()
 	copyHeader(w.Header(), r.Header)
 	w.Header().Add("Cache-Status", status.String())
 	w.WriteHeader(r.StatusCode)
-	_, err := io.Copy(w, r.Body)
+	bytesWritten, err := io.Copy(w, r.Body)
+	log.Trace().Msgf("Wrote body (%d bytes)", bytesWritten)
 	return err
 }
 
@@ -296,7 +315,6 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	}
 
 	cacheControl := res.Header.Get("Cache-Control")
-	log.Trace().Msgf("Header '%s', default '%s'", cacheControl, a.defaults.CacheControl)
 	if cacheControl == "" {
 		cacheControl = a.defaults.CacheControl
 	}
