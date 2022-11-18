@@ -281,6 +281,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	var expires time.Time
 	var age time.Duration
+	date := time.Now()
 
 	// get resource age
 	if ageHeader := res.Header.Get("Age"); ageHeader != "" {
@@ -289,6 +290,15 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 			age = time.Second * time.Duration(seconds)
 		} else {
 			log.Warn().Err(err).Msgf("Could not convert age %s to int", ageHeader)
+		}
+	}
+
+	// get resource generation date
+	if dateHeader := res.Header.Get("Date"); dateHeader != "" {
+		if dateTime, err := time.Parse(time.RFC1123, dateHeader); err == nil {
+			date = dateTime
+		} else {
+			log.Trace().Err(err).Msg("Error parsing expires header")
 		}
 	}
 
@@ -305,7 +315,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 			maxAge := time.Second * time.Duration(seconds)
 			// set expiry as appropriate
 			// this means subract the current age to get current TTL
-			expires = time.Now().Add(maxAge - age)
+			expires = date.Add(maxAge - age)
 		} else {
 			log.Warn().Err(err).Msgf("Could not convert max age %s to int", maxAgeStr)
 		}
@@ -322,6 +332,11 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	// do not cache if expiry not set
 	if expires.IsZero() {
+		return false, time.Time{}
+	}
+
+	// do not cache if expiry before resource date
+	if expires.Before(date) {
 		return false, time.Time{}
 	}
 
