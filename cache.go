@@ -299,24 +299,17 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 		maxAgeStr = val
 	}
 
-	var maxAge time.Duration
 	if maxAgeStr != "" {
 		if seconds, err := strconv.ParseUint(maxAgeStr, 10, 64); err == nil {
-			maxAge = time.Second * time.Duration(seconds)
+			maxAge := time.Second * time.Duration(seconds)
+			// set expiry as appropriate
+			// this means subract the current age to get current TTL
+			expires = time.Now().Add(maxAge - age)
 		} else {
 			log.Warn().Err(err).Msgf("Could not convert max age %s to int", maxAgeStr)
 		}
-	}
-
-	// if we got a max-age, set expiry as appropriate
-	// this means subract the current age to get current TTL
-	if maxAge != 0 {
-		log.Trace().Msgf("Max age is %v and current age %v", maxAge, age)
-		expires = time.Now().Add(maxAge - age)
-	}
-
-	// if no max age specified, see if we have expires header
-	if maxAge == 0 {
+	} else {
+		// since no max age specified, see if we have expires header
 		if expiresHeader := res.Header.Get("Expires"); expiresHeader != "" {
 			if expTime, err := time.Parse(time.RFC1123, expiresHeader); err == nil {
 				expires = expTime
@@ -333,7 +326,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	// do not cache if expiry happens within the update timeout
 	if expires.Before(time.Now().Add(a.updateTimeout)) {
-		log.Trace().Msgf("Max age %s less than update timeout %s", maxAge, a.updateTimeout)
+		log.Trace().Msgf("Expiry %s occurs before update timeout %s", expires, a.updateTimeout)
 		return false, time.Time{}
 	}
 
