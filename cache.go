@@ -355,6 +355,8 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 		return false, time.Time{}
 	}
 
+	var expires time.Time
+
 	// get max age in order: s-maxage, max-age, DEFAULT
 	var maxAgeStr string
 	if val, ok := cc.Get("s-maxage"); ok {
@@ -370,17 +372,34 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 		}
 	}
 
-	// do not cache if max-age not set
+	// if we got a max-age, set expiry as appropriate
+	if maxAge != 0 {
+		expires = time.Now().Add(maxAge)
+	}
+
+	// if no max age specified, see if we have expires header
 	if maxAge == 0 {
+		if expiresHeader := res.Header.Get("Expires"); expiresHeader != "" {
+			if expTime, err := time.Parse(time.RFC1123, expiresHeader); err == nil {
+				expires = expTime
+			} else {
+				log.Trace().Err(err).Msg("Error parsing expires header")
+			}
+		}
+	}
+
+	// do not cache if expiry not set
+	if expires.IsZero() {
 		return false, time.Time{}
 	}
-	// do not cache if max age less than update interval
-	if maxAge < a.updateTimeout {
+
+	// do not cache if expiry happens within the update timeout
+	if expires.Before(time.Now().Add(a.updateTimeout)) {
 		log.Trace().Msgf("Max age %s less than update timeout %s", maxAge, a.updateTimeout)
 		return false, time.Time{}
 	}
 
-	return true, time.Now().Add(maxAge)
+	return true, expires
 }
 
 // updateCache runs an infinite loop to update the cache,
