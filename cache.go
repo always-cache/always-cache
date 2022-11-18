@@ -268,9 +268,9 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 		return false, time.Time{}
 	}
 
-	cacheControl := res.Header.Get("Cache-Control")
-	if cacheControl == "" {
-		cacheControl = a.defaults.CacheControl
+	cacheControl := res.Header.Values("Cache-Control")
+	if len(cacheControl) == 0 {
+		cacheControl = []string{a.defaults.CacheControl}
 	}
 	cc := ParseCacheControl(cacheControl)
 

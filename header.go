@@ -11,15 +11,17 @@ func (c CacheControl) Get(directive string) (string, bool) {
 	return val, ok
 }
 
-func ParseCacheControl(header string) CacheControl {
+func ParseCacheControl(headers []string) CacheControl {
 	m := make(map[string]string)
-	for _, directive := range strings.Split(header, ", ") {
-		parts := strings.SplitN(directive, "=", 2)
-		var val string
-		if len(parts) > 1 {
-			val = parts[1]
+	for _, header := range headers {
+		for _, directive := range strings.Split(header, ", ") {
+			parts := strings.SplitN(directive, "=", 2)
+			var val string
+			if len(parts) > 1 {
+				val = parts[1]
+			}
+			m[parts[0]] = val
 		}
-		m[parts[0]] = val
 	}
 	return CacheControl{m}
 }
