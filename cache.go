@@ -279,6 +279,16 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 		return false, time.Time{}
 	}
 
+	// should not cache if no-store set
+	if _, ok := cc.Get("no-store"); ok {
+		return false, time.Time{}
+	}
+
+	// should not cache if private set
+	if _, ok := cc.Get("private"); ok {
+		return false, time.Time{}
+	}
+
 	var expires time.Time
 	var age time.Duration
 	date := time.Now()
