@@ -284,7 +284,8 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	// get resource age
 	if ageHeader := res.Header.Get("Age"); ageHeader != "" {
-		if seconds, err := strconv.ParseUint(ageHeader, 10, 64); err == nil {
+		firstAgeStr := strings.Split(ageHeader, ", ")[0]
+		if seconds, err := strconv.ParseUint(firstAgeStr, 10, 64); err == nil {
 			age = time.Second * time.Duration(seconds)
 		} else {
 			log.Warn().Err(err).Msgf("Could not convert age %s to int", ageHeader)
