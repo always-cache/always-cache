@@ -129,6 +129,21 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
+	// set default cache-control header if nothing specified by origin
+	if a.defaults.CacheControl != "" && originResponse.Header.Get("Cache-Control") == "" {
+		originResponse.Header.Set("Cache-Control", a.defaults.CacheControl)
+	}
+
+	// if MUST NOT store according to spec, just forward the response
+	if noStore, err := mustNotStore(r, originResponse); noStore || err != nil {
+		send(w, originResponse, cacheStatus)
+		// log possible error
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to determine if response may be stored")
+		}
+		return
+	}
+
 	log.Trace().Msg("Got response from origin")
 
 	// remove connection header from the response

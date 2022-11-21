@@ -13,25 +13,23 @@ func mustNotStore(req *http.Request, res *http.Response) (bool, error) {
 		// §  *  if the response status code is 206 or 304, or the must-understand
 		// §     cache directive (see Section 5.2.2.3) is present: the cache
 		// §     understands the response status code;
-		(((res.StatusCode == 206 || res.StatusCode == 304) ||
-			resCacheControl.HasDirective("must-understand")) &&
-			responseStatusCodeIsUnderstood(res.StatusCode)) &&
-		// §  * the no-store cache directive is not present in the response (see
-		// §    Section 5.2.2.5);
+		statusCodeUnderstoodIfNeeded(res, resCacheControl) &&
+		// §  *  the no-store cache directive is not present in the response (see
+		// §     Section 5.2.2.5);
 		!resCacheControl.HasDirective("no-store") &&
-		// §  * if the cache is shared: the private response directive is either
-		// §    not present or allows a shared cache to store a modified response;
-		// §    see Section 5.2.2.7);
+		// §  *  if the cache is shared: the private response directive is either
+		// §     not present or allows a shared cache to store a modified response;
+		// §     see Section 5.2.2.7);
 		//
 		// the second part of the or is a "MAY" - we don't do that
 		!resCacheControl.HasDirective("private") &&
-		// §  * if the cache is shared: the Authorization header field is not
-		// §    present in the request (see Section 11.6.2 of [HTTP]) or a
-		// §    response directive is present that explicitly allows shared
-		// §    caching (see Section 3.5); and
+		// §  *  if the cache is shared: the Authorization header field is not
+		// §     present in the request (see Section 11.6.2 of [HTTP]) or a
+		// §     response directive is present that explicitly allows shared
+		// §     caching (see Section 3.5); and
 		//
 		// the second part is apparently optional - we don't do that
-		req.Header.Get("Authorization") != "" &&
+		req.Header.Get("Authorization") == "" &&
 		// §  *  the response contains at least one of the following:
 		// §      -  a public response directive (see Section 5.2.2.9);
 		(resCacheControl.HasDirective("public") ||
@@ -43,15 +41,13 @@ func mustNotStore(req *http.Request, res *http.Response) (bool, error) {
 			resCacheControl.HasDirective("max-age") ||
 			// §  -  if the cache is shared: an s-maxage response directive (see
 			// §     Section 5.2.2.10);
-			resCacheControl.HasDirective("s-maxage") ||
-			// §  -  a cache extension that allows it to be cached (see
-			// §     Section 5.2.3); or
-			// §  -  a status code that is defined as heuristically cacheable (see
-			// §     Section 4.2.2).
-			//
-			// the above are not used
-			// the true here is just for better indentation/readability of the above
-			true) {
+			resCacheControl.HasDirective("s-maxage")) {
+		// the below "response contains" characteristics are not used
+		//
+		// §      -  a cache extension that allows it to be cached (see
+		// §         Section 5.2.3); or
+		// §      -  a status code that is defined as heuristically cacheable (see
+		// §         Section 4.2.2).
 		return false, nil
 	}
 	// §  Note that a cache extension can override any of the requirements
@@ -62,6 +58,22 @@ func mustNotStore(req *http.Request, res *http.Response) (bool, error) {
 	return true, nil
 }
 
+// statusCodeUnderstoodIfNeeded checks if the response status code needs to be understood and is.
+// It returns false if the response status code needs to be understood but isn't.
+// It returns true if the response status code needs to be understood and is.
+// It returns true if understanding response status code is not needed.
+//
+// It implements the following spec requirement (from section 3.):
+// §  *  if the response status code is 206 or 304, or the must-understand
+// §     cache directive (see Section 5.2.2.3) is present: the cache
+// §     understands the response status code;
+func statusCodeUnderstoodIfNeeded(res *http.Response, resCacheControl CacheControl) bool {
+	if (res.StatusCode == 206 || res.StatusCode == 304) || resCacheControl.HasDirective("must-understand") {
+		return responseStatusCodeIsUnderstood(res.StatusCode)
+	}
+	return true
+}
+
 // §  In this context, a cache has "understood" a request method or a
 // §  response status code if it recognizes it and implements all specified
 // §  caching-related behavior.
@@ -69,6 +81,7 @@ func mustNotStore(req *http.Request, res *http.Response) (bool, error) {
 func requestMethodIsUnderstood(method string) bool {
 	switch method {
 	case "GET":
+		return true
 	case "POST":
 		return true
 	}
