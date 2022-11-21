@@ -11,6 +11,11 @@ func (c CacheControl) Get(directive string) (string, bool) {
 	return val, ok
 }
 
+func (c CacheControl) HasDirective(directive string) bool {
+	_, ok := c.Get(directive)
+	return ok
+}
+
 func ParseCacheControl(headers []string) CacheControl {
 	m := make(map[string]string)
 	for _, header := range headers {
