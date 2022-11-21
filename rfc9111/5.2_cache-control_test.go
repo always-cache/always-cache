@@ -1,9 +1,9 @@
-package main
+package rfc9111
 
 import "testing"
 
 func TestMaxAge(t *testing.T) {
-	cc := ParseCacheControl("max-age=60")
+	cc := ParseCacheControl([]string{"max-age=60"})
 	val, ok := cc.Get("max-age")
 	if !ok {
 		t.Fatal("Could not get directive")
@@ -14,7 +14,7 @@ func TestMaxAge(t *testing.T) {
 }
 
 func TestReal(t *testing.T) {
-	cc := ParseCacheControl("public, max-age=0, s-maxage=600")
+	cc := ParseCacheControl([]string{"public, max-age=0, s-maxage=600"})
 	if val, ok := cc.Get("public"); !ok || val != "" {
 		t.Fatalf("val: '%s', ok: %v", val, ok)
 	}

@@ -1,9 +1,9 @@
-package main
+package rfc9111
 
 import "net/http"
 
 // § 3.  Storing Responses in Caches
-func mustNotStore(req *http.Request, res *http.Response) (bool, error) {
+func MustNotStore(req *http.Request, res *http.Response) (bool, error) {
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §    A cache MUST NOT store a response to a request unless:
 	// §      *  the request method is understood by the cache;

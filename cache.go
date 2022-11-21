@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericselin/always-cache/rfc9111"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
 	"github.com/rs/zerolog/log"
@@ -135,7 +137,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// if MUST NOT store according to spec, just forward the response
-	if noStore, err := mustNotStore(r, originResponse); noStore || err != nil {
+	if noStore, err := rfc9111.MustNotStore(r, originResponse); noStore || err != nil {
 		send(w, originResponse, cacheStatus)
 		// log possible error
 		if err != nil {
@@ -287,7 +289,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	if len(cacheControl) == 0 {
 		cacheControl = []string{a.defaults.CacheControl}
 	}
-	cc := ParseCacheControl(cacheControl)
+	cc := rfc9111.ParseCacheControl(cacheControl)
 
 	// should not cache if no-cache set
 	if _, ok := cc.Get("no-cache"); ok {

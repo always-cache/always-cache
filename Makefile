@@ -13,4 +13,7 @@ testw:
 test:
 	go test ./...
 
-.PHONY: dev build testw test
+testc:
+	gow -s -e go,mod,yml run . -config cache-tests.yml
+
+.PHONY: dev build testw test testc
