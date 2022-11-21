@@ -1,8 +1,13 @@
 package rfc9111
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
-// §  3.2. Cache-Control
+// CacheControl implements parsing of the "Cache-Control" header (/field).
+//
+// §  5.2. Cache-Control
 // §
 // §  The "Cache-Control" header field is used to list directives for caches along
 // §  the request/response chain. Cache directives are unidirectional, in that the
@@ -25,16 +30,18 @@ import "strings"
 // §    cache-directive = token [ "=" ( token / quoted-string ) ]
 // §
 // §  For the cache directives defined below, no argument is defined (nor allowed) unless stated otherwise.
-
 type CacheControl struct {
 	directives map[string]string
 }
 
+// Get returns the value (/argument) of the specified directive,
+// along with a boolean indicating whether this directive is present
 func (c CacheControl) Get(directive string) (string, bool) {
 	val, ok := c.directives[directive]
 	return val, ok
 }
 
+// HasDirective returns whether the specified directive is present
 func (c CacheControl) HasDirective(directive string) bool {
 	_, ok := c.Get(directive)
 	return ok
@@ -61,12 +68,59 @@ func ParseCacheControl(headers []string) CacheControl {
 	return CacheControl{m}
 }
 
+// getCacheControlDirectiveName returns a normalized name for the given directive.
 func getCacheControlDirectiveName(token string) string {
 	// §  [...] to be compared case-insensitively [...]
 	return strings.ToLower(token)
 }
 
+// getCacheControlDirectiveArgument returns the directive argument in token form,
+// i.e. it converts the argument from "quoted-string" to "token" form if needed.
 func getCacheControlDirectiveArgument(arg string) string {
 	// §  [...] argument that can use both token and quoted-string syntax. [...]
 	return strings.Trim(arg, "\"")
+}
+
+// §  5.2.1. Request Directives
+// §  This section defines cache request directives. They are advisory; caches
+// §  MAY implement them, but are not required to.
+//
+// Request directives are not implemented at this time.
+
+// §  5.2.2. Response Directives
+// §
+// §  This section defines cache response directives. A cache MUST obey the Cache-
+// §  Control directives defined in this section.
+
+// MaxAge returns "max-age" as a duration, along with a boolean indicating
+// whether the "max-age" directive was present.
+//
+// §  5.2.2.1. max-age
+// §
+// §  Argument syntax:
+// §
+// §      delta-seconds (see Section 1.2.2)
+// §
+// §  The max-age response directive indicates that the response is to be considered
+// §  stale after its age is greater than the specified number of seconds. This
+// §  directive uses the token form of the argument syntax: e.g., 'max-age=5' not
+// §  'max-age="5"'. A sender MUST NOT generate the quoted-string form.
+func (c CacheControl) MaxAge() (time.Duration, bool) {
+	return c.getDeltaSeconds("max-age")
+}
+
+// TODO implement other response directives
+
+// getDeltaSeconds returns the "delta-seconds" as `time.Duration`,
+// as well as a boolean indicating whether the directive was set.
+//
+// Examples:
+// directive    -> 0,  false
+// directive=0  -> 0,  true
+// directive=60 -> 60, true
+func (c CacheControl) getDeltaSeconds(directive string) (time.Duration, bool) {
+	if secondsStr, ok := c.Get(directive); ok && secondsStr != "" {
+		return deltaSeconds(secondsStr), true
+	}
+	return 0, false
 }
