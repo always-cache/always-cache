@@ -86,6 +86,11 @@ func (a *AlwaysCache) Run() error {
 
 // ServeHTTP implements the http.Handler interface.
 // It is the main entry point for the caching middleware.
+//
+// - get matching response(s)
+// - select suitable response, if none goto store
+// - construct response
+// - store: check we may store
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// TODO defaults from path matches (that we get here) are not used yet!
 	// defaults := a.getDefaults(r)
@@ -101,27 +106,15 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Debug().Str("testId", testId).Msg("Request for test")
 	}
 
-	// see if this request is cacheble, per configuration
-	// (do not send cached results even if we have a cached entry if the config changed)
-	if a.isCacheable(r) {
-		// check if we have a cached version
-		if cachedBytes, ok, _ := a.cache.Get(key); ok {
-			log.Trace().Str("key", key).Msg("Cache hit and serving")
-			if cachedResponse, err := bytesToResponse(cachedBytes); err == nil {
-				cacheStatus.Hit()
-				send(w, cachedResponse, cacheStatus)
-				return
-			} else {
-				cacheStatus.Forward(CacheStatusFwdBypass)
-				cacheStatus.Detail("error")
-				log.Error().Err(err).Str("key", key).Msg("Could not read from cache")
-				a.cache.Purge(key)
+	if responses, err := a.getResponses(r); err != nil {
+		for _, cachedResponse := range responses {
+			if rfc9111.MustNotReuse(r, cachedResponse) {
+				continue
 			}
-		} else {
-			cacheStatus.Forward(CacheStatusFwdMiss)
+			cacheStatus.Hit()
+			res := rfc9111.ConstructResponse(cachedResponse)
+			send(w, res, cacheStatus)
 		}
-	} else {
-		cacheStatus.Forward(CacheStatusFwdRequest)
 	}
 
 	log.Trace().Msg("Forwarding to origin")
@@ -160,6 +153,16 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if updates := getUpdates(originResponse); len(updates) > 0 {
 		a.saveUpdates(updates)
 	}
+}
+
+func (a *AlwaysCache) getResponses(r *http.Request) ([]*http.Response, error) {
+	key := getKey(r)
+	if cachedBytes, ok, _ := a.cache.Get(key); ok {
+		log.Trace().Str("key", key).Msg("Found cached response")
+		res, err := bytesToResponse(cachedBytes)
+		return []*http.Response{res}, err
+	}
+	return []*http.Response{}, nil
 }
 
 type CacheUpdate struct {

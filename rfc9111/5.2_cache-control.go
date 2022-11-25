@@ -109,6 +109,33 @@ func (c CacheControl) MaxAge() (time.Duration, bool) {
 	return c.getDeltaSeconds("max-age")
 }
 
+// §  5.2.2.10.  s-maxage
+// §
+// §     Argument syntax:
+// §
+// §        delta-seconds (see Section 1.2.2)
+// §
+// §     The s-maxage response directive indicates that, for a shared cache,
+// §     the maximum age specified by this directive overrides the maximum age
+// §     specified by either the max-age directive or the Expires header
+// §     field.
+// §
+// §     The s-maxage directive incorporates the semantics of the
+// §     proxy-revalidate response directive (Section 5.2.2.8) for a shared
+// §     cache.  A shared cache MUST NOT reuse a stale response with s-maxage
+// §     to satisfy another request until it has been successfully validated
+// §     by the origin, as defined by Section 4.3.  This directive also
+// §     permits a shared cache to reuse a response to a request containing an
+// §     Authorization header field, subject to the above requirements on
+// §     maximum age and revalidation (Section 3.5).
+// §
+// §     This directive uses the token form of the argument syntax: e.g.,
+// §     's-maxage=10' not 's-maxage="10"'.  A sender MUST NOT generate the
+// §     quoted-string form.
+func (c CacheControl) SMaxAge() (time.Duration, bool) {
+	return c.getDeltaSeconds("s-maxage")
+}
+
 // TODO implement other response directives
 
 // getDeltaSeconds returns the "delta-seconds" as `time.Duration`,

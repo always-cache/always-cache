@@ -27,9 +27,7 @@ func MustNotStore(req *http.Request, res *http.Response) (bool, error) {
 		// §     present in the request (see Section 11.6.2 of [HTTP]) or a
 		// §     response directive is present that explicitly allows shared
 		// §     caching (see Section 3.5); and
-		//
-		// the second part is apparently optional - we don't do that
-		req.Header.Get("Authorization") == "" &&
+		req.Header.Get("Authorization") == "" || mayUseResponseForAuthenticatedRequest(resCacheControl) &&
 		// §  *  the response contains at least one of the following:
 		// §      -  a public response directive (see Section 5.2.2.9);
 		(resCacheControl.HasDirective("public") ||
