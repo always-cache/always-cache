@@ -66,5 +66,5 @@ func deltaSeconds(secondsStr string) time.Duration {
 }
 
 func toDeltaSeconds(duration time.Duration) string {
-	return fmt.Sprintf("%d", duration.Seconds())
+	return fmt.Sprintf("%.f", duration.Seconds())
 }

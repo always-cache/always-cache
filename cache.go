@@ -106,7 +106,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Debug().Str("testId", testId).Msg("Request for test")
 	}
 
-	if responses, err := a.getResponses(r); err != nil {
+	if responses, err := a.getResponses(r); err == nil {
 		for _, cachedResponse := range responses {
 			if rfc9111.MustNotReuse(r, cachedResponse) {
 				continue
@@ -114,7 +114,10 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cacheStatus.Hit()
 			res := rfc9111.ConstructResponse(cachedResponse)
 			send(w, res, cacheStatus)
+			return
 		}
+	} else {
+		log.Warn().Err(err).Msg("Error getting responses")
 	}
 
 	log.Trace().Msg("Forwarding to origin")
@@ -247,7 +250,9 @@ func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
 
 func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
 	log.Trace().Msg("Sending response")
-	defer r.Body.Close()
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
 	copyHeader(w.Header(), r.Header)
 	w.Header().Add("Cache-Status", status.String())
 	w.WriteHeader(r.StatusCode)

@@ -29,10 +29,10 @@ func freshness_lifetime(res *http.Response) time.Duration {
 	// §        its value minus the value of the Date response header field (using
 	// §        the time the message was received if it is not present, as per
 	// §        Section 6.6.1 of [HTTP]), or
-	if expires, present := getExpires(res); present {
+	if expires, err := getExpires(res); err == nil {
 		// WARNING assuming date header is stored as current date if missing
-		if date, present := getDate(res); present {
-			return expires - date
+		if date, err := httpDate(res.Header.Get("Date")); err == nil {
+			return expires.Sub(date)
 		}
 	}
 	// §

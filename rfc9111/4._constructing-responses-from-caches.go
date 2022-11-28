@@ -24,7 +24,7 @@ func MustNotReuse(req *http.Request, res *http.Response) bool {
 		// §     *  the stored response does not contain the no-cache directive
 		// §        (Section 5.2.2.4), unless it is successfully validated
 		// §        (Section 4.3), and
-		resCacheControl.HasDirective("no-cache") || validate(req, res) &&
+		!resCacheControl.HasDirective("no-cache") || validate(req, res) &&
 		// §
 		// §     *  the stored response is one of the following:
 		// §
@@ -48,14 +48,19 @@ func MustNotReuse(req *http.Request, res *http.Response) bool {
 }
 
 func ConstructResponse(storedResponse *http.Response) *http.Response {
-	res := &http.Response{}
+	res := &http.Response{
+		StatusCode: storedResponse.StatusCode,
+		Header:     storedResponse.Header,
+		Body:       storedResponse.Body,
+	}
+
 	// §     When a stored response is used to satisfy a request without
 	// §     validation, a cache MUST generate an Age header field (Section 5.1),
 	// §     replacing any present in the response with a value equal to the
 	// §     stored response's current_age; see Section 4.2.3.
 	age := current_age(storedResponse)
 	res.Header.Add("Age", toDeltaSeconds(age))
-	// TODO copy headers and body
+
 	return res
 }
 
