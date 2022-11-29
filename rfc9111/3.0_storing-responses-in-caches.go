@@ -2,8 +2,34 @@ package rfc9111
 
 import "net/http"
 
+// ConstructDownstreamResponse returns a response that can be forwarded downstream.
+// It returns true if the response may be stored given the request in question.
+// WARNING: While this creates a new response, the response body is not cloned.
+func ConstructDownstreamResponse(req *http.Request, originResponse *http.Response) (downstreamResponse *http.Response, mayBeStored bool) {
+	mayBeStored = !MustNotStore(req, originResponse)
+
+	downstreamResponse = &http.Response{
+		Status:           originResponse.Status,
+		StatusCode:       originResponse.StatusCode,
+		Proto:            originResponse.Proto,
+		ProtoMajor:       originResponse.ProtoMajor,
+		ProtoMinor:       originResponse.ProtoMinor,
+		Header:           storableHeader(originResponse.Header),
+		Body:             originResponse.Body,
+		ContentLength:    originResponse.ContentLength,
+		TransferEncoding: originResponse.TransferEncoding,
+		Close:            originResponse.Close,
+		Uncompressed:     originResponse.Uncompressed,
+		Trailer:          storableTrailer(originResponse.Trailer),
+		Request:          originResponse.Request,
+		TLS:              originResponse.TLS,
+	}
+
+	return
+}
+
 // § 3.  Storing Responses in Caches
-func MustNotStore(req *http.Request, res *http.Response) (bool, error) {
+func MustNotStore(req *http.Request, res *http.Response) bool {
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §    A cache MUST NOT store a response to a request unless:
 	// §      *  the request method is understood by the cache;
@@ -46,14 +72,14 @@ func MustNotStore(req *http.Request, res *http.Response) (bool, error) {
 		// §         Section 5.2.3); or
 		// §      -  a status code that is defined as heuristically cacheable (see
 		// §         Section 4.2.2).
-		return false, nil
+		return false
 	}
 	// §  Note that a cache extension can override any of the requirements
 	// §  listed; see Section 5.2.3.
 	//
 	// not used at the moment
 
-	return true, nil
+	return true
 }
 
 // statusCodeUnderstoodIfNeeded checks if the response status code needs to be understood and is.

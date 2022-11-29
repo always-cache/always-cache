@@ -119,39 +119,27 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Trace().Msg("Forwarding to origin")
-
 	res, err := a.fetch(r)
-	originResponse := res.response
 	if err != nil {
 		panic(err)
 	}
-
-	// set default cache-control header if nothing specified by origin
-	if a.defaults.CacheControl != "" && originResponse.Header.Get("Cache-Control") == "" {
-		originResponse.Header.Set("Cache-Control", a.defaults.CacheControl)
-	}
-
-	// if MUST NOT store according to spec, just forward the response
-	if noStore, err := rfc9111.MustNotStore(r, originResponse); noStore || err != nil {
-		send(w, originResponse, cacheStatus)
-		// log possible error
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to determine if response may be stored")
-		}
-		return
-	}
-
 	log.Trace().Msg("Got response from origin")
 
-	// remove connection header from the response
-	originResponse.Header.Del("Connection")
+	// set default cache-control header if nothing specified by origin
+	if a.defaults.CacheControl != "" && res.response.Header.Get("Cache-Control") == "" {
+		res.response.Header.Set("Cache-Control", a.defaults.CacheControl)
+	}
 
-	// we already checked that we may store the response
-	a.save(key, res)
+	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
+	res.response = downstreamResponse
 
-	send(w, originResponse, cacheStatus)
+	if mayStore {
+		a.save(key, res)
+	}
 
-	if updates := getUpdates(originResponse); len(updates) > 0 {
+	send(w, downstreamResponse, cacheStatus)
+
+	if updates := getUpdates(res.response); len(updates) > 0 {
 		a.saveUpdates(updates)
 	}
 }
@@ -334,7 +322,8 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if noStore, err := rfc9111.MustNotStore(req, res.response); !noStore && err == nil {
+	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
+		res.response = dRes
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {
