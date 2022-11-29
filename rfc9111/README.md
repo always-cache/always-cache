@@ -8,4 +8,4 @@ Files in this directory correspond to sections in the RFC. The RFC is copied ver
 // §  This text here is copied from the RFC verbatim.
 ```
 
-Unfortunately the files (file names in e.g. `ls`) are sorted a bit weird, with the parent section sorted after the subsections. This is because unicode sorting ignores punctuation.
+Filenames of parent (root) sections have a trailing zero added to the section number in order to make them sort before the child sections.
