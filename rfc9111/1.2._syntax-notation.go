@@ -3,6 +3,7 @@ package rfc9111
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -146,7 +147,7 @@ func HttpDate(dateStr string) (time.Time, error) {
 const imfDateLayout = "Mon, 02 Jan 2006 15:04:05 MST"
 
 func imfDate(dateStr string) (time.Time, error) {
-	date, err := time.Parse(imfDateLayout, dateStr)
+	date, err := time.Parse(imfDateLayout, normalizeDateStr(dateStr))
 	if err != nil {
 		return date, err
 	}
@@ -172,15 +173,19 @@ func imfDate(dateStr string) (time.Time, error) {
 // §       date3        = month SP ( 2DIGIT / ( SP 1DIGIT ))
 // §                    ; e.g., Jun  2
 func obsDate(dateStr string) (time.Time, error) {
-	if date, err := time.Parse(time.RFC850, dateStr); err == nil {
+	str := normalizeDateStr(dateStr)
+	if date, err := time.Parse(time.RFC850, str); err == nil {
 		return date, err
 	}
-	return time.Parse(time.ANSIC, dateStr)
+	return time.Parse(time.ANSIC, str)
 }
 
-// §
 // §     HTTP-date is case sensitive.  Note that Section 4.2 of [CACHING]
 // §     relaxes this for cache recipients.
+func normalizeDateStr(dateStr string) string {
+	return strings.ToUpper(dateStr)
+}
+
 // §
 // §     A sender MUST NOT generate additional whitespace in an HTTP-date
 // §     beyond that specifically included as SP in the grammar.  The
