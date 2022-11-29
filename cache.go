@@ -246,6 +246,10 @@ func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	timedRes := timedResponse{requestTime: time.Now()}
 	originResponse, err := a.client.Do(req)
 	timedRes.responseTime = time.Now()
+	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
+	if originResponse.Header.Get("Date") == "" {
+		originResponse.Header.Set("Date", rfc9111.ToHttpDate(time.Now()))
+	}
 	timedRes.response = originResponse
 	return timedRes, err
 }

@@ -2,6 +2,7 @@ package rfc9111
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,10 @@ func HttpDate(dateStr string) (time.Time, error) {
 		// return original error if unsuccessful
 		return date, err
 	}
+}
+
+func ToHttpDate(date time.Time) string {
+	return date.UTC().Format(http.TimeFormat)
 }
 
 // §     An HTTP-date value represents time as an instance of Coordinated

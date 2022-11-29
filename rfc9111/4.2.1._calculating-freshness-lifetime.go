@@ -3,6 +3,8 @@ package rfc9111
 import (
 	"net/http"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 func GetExpiration(res *http.Response) time.Time {
@@ -37,9 +39,11 @@ func freshness_lifetime(res *http.Response) time.Duration {
 	// §        the time the message was received if it is not present, as per
 	// §        Section 6.6.1 of [HTTP]), or
 	if expires, err := getExpires(res); err == nil {
-		// WARNING assuming date header is stored as current date if missing
 		if date, err := HttpDate(res.Header.Get("Date")); err == nil {
 			return expires.Sub(date)
+		} else {
+			log.Warn().Msgf("Could not parse date header '%s'", res.Header.Get("Date"))
+			return expires.Sub(time.Now())
 		}
 	}
 	// §
