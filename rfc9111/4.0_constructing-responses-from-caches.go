@@ -5,8 +5,18 @@ import (
 	"time"
 )
 
+// ConstructReusableResponse returns a response that can be sent downstream,
+// if the given response may be used to satisfy the given request.
+// It returns nil if the response must not be reused.
+func ConstructReusableResponse(req *http.Request, res *http.Response, requestTime time.Time, responseTime time.Time) *http.Response {
+	if mustNotReuse(req, res, requestTime, responseTime) {
+		return nil
+	}
+	return constructResponse(res, responseTime, requestTime)
+}
+
 // §  4.  Constructing Responses from Caches
-func MustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, responseTime time.Time) bool {
+func mustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, responseTime time.Time) bool {
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §     When presented with a request, a cache MUST NOT reuse a stored
 	// §     response unless:
@@ -49,7 +59,7 @@ func MustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, 
 	return !mayReuse
 }
 
-func ConstructResponse(storedResponse *http.Response, responseTime, requestTime time.Time) *http.Response {
+func constructResponse(storedResponse *http.Response, responseTime, requestTime time.Time) *http.Response {
 	res := &http.Response{
 		StatusCode: storedResponse.StatusCode,
 		Header:     storedResponse.Header,

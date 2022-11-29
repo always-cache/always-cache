@@ -108,13 +108,11 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if responses, err := a.getResponses(r); err == nil {
 		for _, sRes := range responses {
-			if rfc9111.MustNotReuse(r, sRes.response, sRes.responseTime, sRes.requestTime) {
-				continue
+			if res := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime); res != nil {
+				cacheStatus.Hit()
+				send(w, res, cacheStatus)
+				return
 			}
-			cacheStatus.Hit()
-			res := rfc9111.ConstructResponse(sRes.response, sRes.responseTime, sRes.requestTime)
-			send(w, res, cacheStatus)
-			return
 		}
 	} else {
 		log.Warn().Err(err).Msg("Error getting responses")
@@ -247,7 +245,7 @@ func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	originResponse, err := a.client.Do(req)
 	timedRes.responseTime = time.Now()
 	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
-	if originResponse.Header.Get("Date") == "" {
+	if err == nil && originResponse.Header.Get("Date") == "" {
 		originResponse.Header.Set("Date", rfc9111.ToHttpDate(time.Now()))
 	}
 	timedRes.response = originResponse

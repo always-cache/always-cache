@@ -28,7 +28,7 @@ func TestConstructResponse(t *testing.T) {
 		TLS:              &tls.ConnectionState{},
 	}
 	r.Header.Add("test", "header")
-	res := ConstructResponse(&r, time.Now(), time.Now())
+	res := constructResponse(&r, time.Now(), time.Now())
 
 	if res.StatusCode != 200 {
 		t.Fatalf("Status code is %d", res.StatusCode)
