@@ -24,7 +24,7 @@ func MustNotReuse(req *http.Request, res *http.Response) bool {
 		// §     *  the stored response does not contain the no-cache directive
 		// §        (Section 5.2.2.4), unless it is successfully validated
 		// §        (Section 4.3), and
-		!resCacheControl.HasDirective("no-cache") || validate(req, res) &&
+		(!resCacheControl.HasDirective("no-cache") || validate(req, res)) &&
 		// §
 		// §     *  the stored response is one of the following:
 		// §
