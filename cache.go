@@ -23,14 +23,17 @@ import (
 )
 
 type AlwaysCache struct {
-	initialized   bool
-	port          int
-	cache         CacheProvider
-	originURL     *url.URL
-	updateTimeout time.Duration
-	defaults      Defaults
-	paths         []Path
-	client        http.Client
+	// LEGACY MODE
+	// Only invalidate cache, i.e. do not update cache on invalidation
+	invalidateOnly bool
+	initialized    bool
+	port           int
+	cache          CacheProvider
+	originURL      *url.URL
+	updateTimeout  time.Duration
+	defaults       Defaults
+	paths          []Path
+	client         http.Client
 }
 
 type Path struct {
@@ -154,7 +157,11 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 
 func (a *AlwaysCache) updateIfNeeded(upRes *http.Response) {
 	if updates := getUpdates(upRes); len(updates) > 0 {
-		a.saveUpdates(updates)
+		if !a.invalidateOnly {
+			a.saveUpdates(updates)
+		} else {
+			a.invalidateUpdates(updates)
+		}
 	}
 }
 
@@ -202,6 +209,14 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 		} else {
 			updateCache()
 		}
+	}
+}
+
+func (a *AlwaysCache) invalidateUpdates(updates []CacheUpdate) {
+	for _, update := range updates {
+		log.Trace().Str("update", update.Path).Msgf("Invalidating cache based on header")
+		req, _ := http.NewRequest("GET", update.Path, nil)
+		a.cache.Purge(getKey(req))
 	}
 }
 

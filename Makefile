@@ -14,6 +14,6 @@ test:
 	go test ./...
 
 testc:
-	gow -s -e go,mod,yml run . -config cache-tests.yml
+	gow -s -e go,mod,yml run . -config cache-tests.yml -legacy
 
 .PHONY: dev build testw test testc

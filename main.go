@@ -28,6 +28,7 @@ func copyHeader(dst, src http.Header) {
 
 func main() {
 	configFile := flag.String("config", "config.yml", "Path to config file")
+	legacyMode := flag.Bool("legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.Parse()
 
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
@@ -48,7 +49,9 @@ func main() {
 		log.Fatal().Msg("Path-based overrides not yet supported")
 	}
 
-	acache := AlwaysCache{}
+	acache := AlwaysCache{
+		invalidateOnly: *legacyMode,
+	}
 
 	// if updates not disabled, update every minute
 	if !origin.DisableUpdate {
