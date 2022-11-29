@@ -483,14 +483,15 @@ func getLogger(r *http.Request) *zerolog.Logger {
 // If it is a GET request, it will return the URL.
 // If it is a POST request, it will return the URL combined with a hash of the body.
 func getKey(r *http.Request) string {
+	key := r.Method + ":" + r.URL.RequestURI()
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
-			return r.URL.RequestURI() + ":" + multipartHash
+			return key + ":" + multipartHash
 		} else if bodyHash := bodyHash(r); bodyHash != "" {
-			return r.URL.RequestURI() + ":" + bodyHash
+			return key + ":" + bodyHash
 		}
 	}
-	return r.URL.RequestURI()
+	return key
 }
 
 // multipartHash returns the hash of a multipart request body.

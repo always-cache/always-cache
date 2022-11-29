@@ -157,7 +157,7 @@ func TestMaxAgeUpdate(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.Header().Add("cache-control", "max-age=1")
+		w.Header().Add("cache-control", "max-age=2")
 		w.Write([]byte(response))
 	})
 	mux := http.NewServeMux()
@@ -167,7 +167,7 @@ func TestMaxAgeUpdate(t *testing.T) {
 
 	mw.ServeHTTP(httptest.NewRecorder(), req)
 	response = "Hello world 2"
-	time.Sleep(time.Second)
+	time.Sleep(time.Second * 3)
 	response = ""
 	rr := httptest.NewRecorder()
 	mw.ServeHTTP(rr, req)
