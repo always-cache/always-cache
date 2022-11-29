@@ -21,7 +21,7 @@ func ConstructDownstreamResponse(req *http.Request, originResponse *http.Respons
 		Close:            originResponse.Close,
 		Uncompressed:     originResponse.Uncompressed,
 		Trailer:          storableTrailer(originResponse.Trailer),
-		Request:          originResponse.Request,
+		Request:          req,
 		TLS:              originResponse.TLS,
 	}
 
