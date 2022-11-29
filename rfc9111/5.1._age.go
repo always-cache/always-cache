@@ -2,6 +2,7 @@ package rfc9111
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,8 +31,10 @@ import (
 // §     However, lack of an Age header field does not imply the origin was
 // §     contacted.
 func getAge(res *http.Response) (time.Duration, bool) {
-	if secondsStr := res.Header.Get("Age"); secondsStr != "" {
-		return deltaSeconds(secondsStr), true
+	headerFirst := res.Header.Get("Age")
+	listFirst := strings.Split(headerFirst, ", ")[0]
+	if listFirst != "" {
+		return deltaSeconds(listFirst), true
 	}
 	return 0, false
 }
