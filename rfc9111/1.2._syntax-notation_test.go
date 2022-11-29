@@ -25,3 +25,10 @@ func TestHttpDateTZCase(t *testing.T) {
 		t.Fatalf("Error parsing date %+v", err)
 	}
 }
+
+func TestHttpDateMultipleSpaces(t *testing.T) {
+	_, err := HttpDate("Thu, 18  Aug  2050 02:01:18 GMT")
+	if err == nil {
+		t.Fatalf("Should not parse successfully")
+	}
+}

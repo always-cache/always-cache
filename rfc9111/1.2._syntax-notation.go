@@ -154,6 +154,10 @@ func imfDate(dateStr string) (time.Time, error) {
 	if date.Location().String() != "GMT" {
 		return date, fmt.Errorf("Date %s is not in GMT time, but %s", date, date.Location())
 	}
+	// imf date should be fixed length (e.g. no extra spaces)
+	if len(dateStr) != len(imfDateLayout) {
+		return date, fmt.Errorf("Wrong length on date %s", dateStr)
+	}
 	return date, err
 }
 
