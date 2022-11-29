@@ -148,9 +148,8 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// remove connection header from the response
 	originResponse.Header.Del("Connection")
 
-	if cacheable, expiration := a.shouldCache(originResponse); cacheable {
-		a.save(key, res, expiration)
-	}
+	// we already checked that we may store the response
+	a.save(key, res)
 
 	send(w, originResponse, cacheStatus)
 
@@ -198,40 +197,37 @@ func getUpdates(res *http.Response) []CacheUpdate {
 func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 	for _, update := range updates {
 		log.Trace().Str("update", update.Path).Msgf("Updating cache based on header")
-		req, _ := http.NewRequest("GET", update.Path, nil)
-		if update.Delay > 0 {
-			go func() {
-				time.Sleep(update.Delay)
-				updatedResponse, err := a.fetch(req)
-				if err != nil {
-					panic(err)
-				}
-				if cacheable, expiration := a.shouldCache(updatedResponse.response); cacheable {
-					a.save(getKey(req), updatedResponse, expiration)
-				}
-			}()
-		} else {
-			updatedResponse, err := a.fetch(req)
+		updateCache := func() {
+			req, _ := http.NewRequest("GET", update.Path, nil)
+			_, err := a.saveRequest(req, getKey(req))
 			if err != nil {
 				panic(err)
 			}
-			if cacheable, expiration := a.shouldCache(updatedResponse.response); cacheable {
-				a.save(getKey(req), updatedResponse, expiration)
-			}
+		}
+		if update.Delay > 0 {
+			go func() {
+				time.Sleep(update.Delay)
+				updateCache()
+			}()
+		} else {
+			updateCache()
 		}
 	}
 }
 
-func (a *AlwaysCache) save(key string, sRes timedResponse, exp time.Time) {
+func (a *AlwaysCache) save(key string, sRes timedResponse) {
 	responseBytes, err := storedResponseToBytes(sRes)
 	if err != nil {
 		panic(err)
 	}
-	if err := a.cache.Put(key, exp, responseBytes); err != nil {
-		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
-		panic(err)
+	exp := rfc9111.GetExpiration(sRes.response)
+	if !exp.IsZero() {
+		if err := a.cache.Put(key, exp, responseBytes); err != nil {
+			log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
+			panic(err)
+		}
+		log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
 	}
-	log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
 }
 
 // fetch the resource specified in the incoming request from the origin
@@ -291,105 +287,6 @@ func getDelay(update string) time.Duration {
 	return 0
 }
 
-// shouldCache checks if the response should be cached.
-// If the response is cachable, it will return true, along with the expiration time.
-func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
-	// cache only success (HTTP 200)
-	if res.StatusCode != http.StatusOK {
-		return false, time.Time{}
-	}
-
-	cacheControl := res.Header.Values("Cache-Control")
-	if len(cacheControl) == 0 {
-		cacheControl = []string{a.defaults.CacheControl}
-	}
-	cc := rfc9111.ParseCacheControl(cacheControl)
-
-	// should not cache if no-cache set
-	if _, ok := cc.Get("no-cache"); ok {
-		return false, time.Time{}
-	}
-
-	// should not cache if no-store set
-	if _, ok := cc.Get("no-store"); ok {
-		return false, time.Time{}
-	}
-
-	// should not cache if private set
-	if _, ok := cc.Get("private"); ok {
-		return false, time.Time{}
-	}
-
-	var expires time.Time
-	var age time.Duration
-	date := time.Now()
-
-	// get resource age
-	if ageHeader := res.Header.Get("Age"); ageHeader != "" {
-		firstAgeStr := strings.Split(ageHeader, ", ")[0]
-		if seconds, err := strconv.ParseUint(firstAgeStr, 10, 64); err == nil {
-			age = time.Second * time.Duration(seconds)
-		} else {
-			log.Warn().Err(err).Msgf("Could not convert age %s to int", ageHeader)
-		}
-	}
-
-	// get resource generation date
-	if dateHeader := res.Header.Get("Date"); dateHeader != "" {
-		if dateTime, err := rfc9111.HttpDate(dateHeader); err == nil {
-			date = dateTime
-		} else {
-			log.Trace().Err(err).Msg("Error parsing expires header")
-		}
-	}
-
-	// get max age in order: s-maxage, max-age
-	var maxAgeStr string
-	if val, ok := cc.Get("s-maxage"); ok {
-		maxAgeStr = val
-	} else if val, ok := cc.Get("max-age"); ok {
-		maxAgeStr = val
-	}
-
-	if maxAgeStr != "" {
-		if seconds, err := strconv.ParseUint(maxAgeStr, 10, 64); err == nil {
-			maxAge := time.Second * time.Duration(seconds)
-			// set expiry as appropriate
-			// this means subract the current age to get current TTL
-			expires = date.Add(maxAge - age)
-		} else {
-			log.Warn().Err(err).Msgf("Could not convert max age %s to int", maxAgeStr)
-		}
-	} else {
-		// since no max age specified, see if we have expires header
-		if expiresHeader := res.Header.Get("Expires"); expiresHeader != "" {
-			if expTime, err := rfc9111.HttpDate(expiresHeader); err == nil {
-				expires = expTime
-			} else {
-				log.Trace().Err(err).Msg("Error parsing expires header")
-			}
-		}
-	}
-
-	// do not cache if expiry not set
-	if expires.IsZero() {
-		return false, time.Time{}
-	}
-
-	// do not cache if expiry before resource date
-	if expires.Before(date) {
-		return false, time.Time{}
-	}
-
-	// do not cache if expiry happens within the update timeout
-	if expires.Before(time.Now().Add(a.updateTimeout)) {
-		log.Trace().Msgf("Expiry %s occurs before update timeout %s", expires, a.updateTimeout)
-		return false, time.Time{}
-	}
-
-	return true, expires
-}
-
 // updateCache runs an infinite loop to update the cache,
 // one entry at a time.
 // It assumes that the cache key equals the request URL.
@@ -435,33 +332,13 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if cacheable, exp := a.shouldCache(res.response); cacheable {
-		a.save(key, res, exp)
+	if noStore, err := rfc9111.MustNotStore(req, res.response); !noStore && err == nil {
+		a.save(key, res)
 		return true, nil
+	} else if err != nil {
+		return false, err
 	}
 	return false, nil
-}
-
-// shouldBypass provides a very early hint that the request should be completely
-// disregarded by the cache, and should just be passed along without any processing
-// I.e. bypass cache completely.
-// Returns a non-empty string containing the forward reason if cache should be bypassed.
-func (a *AlwaysCache) shouldBypass(r *http.Request) string {
-	if r.Header.Get("Authorization") != "" {
-		return "method"
-	}
-
-	return ""
-}
-
-// isCacheable checks if the request is cachable.
-func (a *AlwaysCache) isCacheable(r *http.Request) bool {
-	defaults := a.getDefaults(r)
-	if defaults.SafeMethods.Has(r.Method) {
-		return true
-	}
-
-	return r.Method == "GET"
 }
 
 // getDefaults gets the configuration for the requested path,

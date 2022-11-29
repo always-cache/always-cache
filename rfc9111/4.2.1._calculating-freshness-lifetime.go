@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+func GetExpiration(res *http.Response) time.Time {
+	if ttl := freshness_lifetime(res); ttl != 0 {
+		return time.Now().Add(ttl)
+	}
+	return time.Time{}
+}
+
 // §  4.2.1.  Calculating Freshness Lifetime
 // §
 func freshness_lifetime(res *http.Response) time.Duration {
