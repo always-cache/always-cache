@@ -1,10 +1,12 @@
 package rfc9111
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // §  4.  Constructing Responses from Caches
-
-func MustNotReuse(req *http.Request, res *http.Response) bool {
+func MustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, responseTime time.Time) bool {
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §     When presented with a request, a cache MUST NOT reuse a stored
 	// §     response unless:
@@ -29,7 +31,7 @@ func MustNotReuse(req *http.Request, res *http.Response) bool {
 		// §     *  the stored response is one of the following:
 		// §
 		// §        -  fresh (see Section 4.2), or
-		(isFresh(res) ||
+		(isFresh(res, responseTime, requestTime) ||
 			// §
 			// §    -  allowed to be served stale (see Section 4.2.4), or
 			// TODO
@@ -47,7 +49,7 @@ func MustNotReuse(req *http.Request, res *http.Response) bool {
 	return !mayReuse
 }
 
-func ConstructResponse(storedResponse *http.Response) *http.Response {
+func ConstructResponse(storedResponse *http.Response, responseTime, requestTime time.Time) *http.Response {
 	res := &http.Response{
 		StatusCode: storedResponse.StatusCode,
 		Header:     storedResponse.Header,
@@ -58,7 +60,7 @@ func ConstructResponse(storedResponse *http.Response) *http.Response {
 	// §     validation, a cache MUST generate an Age header field (Section 5.1),
 	// §     replacing any present in the response with a value equal to the
 	// §     stored response's current_age; see Section 4.2.3.
-	age := current_age(storedResponse)
+	age := current_age(storedResponse, responseTime, requestTime)
 	res.Header.Add("Age", toDeltaSeconds(age))
 
 	return res

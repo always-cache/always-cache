@@ -1,6 +1,11 @@
 package rfc9111
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+
+	"github.com/rs/zerolog/log"
+)
 
 // §  4.2.  Freshness
 // §
@@ -46,8 +51,9 @@ import "net/http"
 // §
 // §     freshness_lifetime is defined in Section 4.2.1; current_age is
 // §     defined in Section 4.2.3.
-func isFresh(res *http.Response) bool {
-	return freshness_lifetime(res) > current_age(res)
+func isFresh(res *http.Response, responseTime, requestTime time.Time) bool {
+	log.Trace().Msgf("freshness_lifetime: %+v, current_age: %+v", freshness_lifetime(res), current_age(res, responseTime, requestTime))
+	return freshness_lifetime(res) > current_age(res, responseTime, requestTime)
 }
 
 // §     Clients can send the max-age or min-fresh request directives

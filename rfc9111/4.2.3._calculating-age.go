@@ -56,18 +56,12 @@ func now() time.Time {
 // §     "request_time"
 // §        The value of the clock at the time of the request that resulted in
 // §        the stored response.
-func request_time(res *http.Response) time.Time {
-	// WARNING assuming no network latency
-	return date_value(res)
-}
-
 // §
 // §     "response_time"
 // §        The value of the clock at the time the response was received.
-func response_time(res *http.Response) time.Time {
-	// WARNING assuming no network latency
-	return date_value(res)
-}
+//
+// The above are passed in to the functions where needed - they cannot be induced
+// from the request and response.
 
 // §
 // §     A response's age can be calculated in two entirely independent ways:
@@ -83,19 +77,18 @@ func response_time(res *http.Response) time.Time {
 // §         initiated, not the time that the response was received.
 // §
 // §       apparent_age = max(0, response_time - date_value);
-func apparent_age(res *http.Response) time.Duration {
-	return durationMax(0, response_time(res).Sub(date_value(res)))
+func apparent_age(res *http.Response, responseTime time.Time) time.Duration {
+	return durationMax(0, responseTime.Sub(date_value(res)))
 }
 
 // §       response_delay = response_time - request_time;
-
-func response_delay(res *http.Response) time.Duration {
-	return 0
+func response_delay(responseTime, requestTime time.Time) time.Duration {
+	return responseTime.Sub(requestTime)
 }
 
 // §       corrected_age_value = age_value + response_delay;
-func corrected_age_value(res *http.Response) time.Duration {
-	return age_value(res) + response_delay(res)
+func corrected_age_value(res *http.Response, responseTime, requestTime time.Time) time.Duration {
+	return age_value(res) + response_delay(responseTime, requestTime)
 }
 
 // §
@@ -105,8 +98,8 @@ func corrected_age_value(res *http.Response) time.Duration {
 // §     calculated more conservatively as
 // §
 // §       corrected_initial_age = max(apparent_age, corrected_age_value);
-func corrected_initial_age(res *http.Response) time.Duration {
-	return durationMax(apparent_age(res), corrected_age_value(res))
+func corrected_initial_age(res *http.Response, responseTime, requestTime time.Time) time.Duration {
+	return durationMax(apparent_age(res, responseTime), corrected_age_value(res, responseTime, requestTime))
 }
 
 // §
@@ -115,13 +108,13 @@ func corrected_initial_age(res *http.Response) time.Duration {
 // §     the origin server to the corrected_initial_age.
 // §
 // §       resident_time = now - response_time;
-func resident_time(res *http.Response) time.Duration {
-	return now().Sub(response_time(res))
+func resident_time(res *http.Response, responseTime time.Time) time.Duration {
+	return now().Sub(responseTime)
 }
 
 // §       current_age = corrected_initial_age + resident_time;
-func current_age(res *http.Response) time.Duration {
-	return corrected_initial_age(res) + resident_time(res)
+func current_age(res *http.Response, responseTime, requestTime time.Time) time.Duration {
+	return corrected_initial_age(res, responseTime, requestTime) + resident_time(res, responseTime)
 }
 
 func durationMax(d1, d2 time.Duration) time.Duration {

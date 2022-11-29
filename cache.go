@@ -107,12 +107,12 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if responses, err := a.getResponses(r); err == nil {
-		for _, cachedResponse := range responses {
-			if rfc9111.MustNotReuse(r, cachedResponse) {
+		for _, sRes := range responses {
+			if rfc9111.MustNotReuse(r, sRes.response, sRes.responseTime, sRes.requestTime) {
 				continue
 			}
 			cacheStatus.Hit()
-			res := rfc9111.ConstructResponse(cachedResponse)
+			res := rfc9111.ConstructResponse(sRes.response, sRes.responseTime, sRes.requestTime)
 			send(w, res, cacheStatus)
 			return
 		}
@@ -122,7 +122,8 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Trace().Msg("Forwarding to origin")
 
-	originResponse, err := a.fetch(r)
+	res, err := a.fetch(r)
+	originResponse := res.response
 	if err != nil {
 		panic(err)
 	}
@@ -148,7 +149,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	originResponse.Header.Del("Connection")
 
 	if cacheable, expiration := a.shouldCache(originResponse); cacheable {
-		a.save(key, originResponse, expiration)
+		a.save(key, res, expiration)
 	}
 
 	send(w, originResponse, cacheStatus)
@@ -158,14 +159,14 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *AlwaysCache) getResponses(r *http.Request) ([]*http.Response, error) {
+func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 	key := getKey(r)
 	if cachedBytes, ok, _ := a.cache.Get(key); ok {
 		log.Trace().Str("key", key).Msg("Found cached response")
-		res, err := bytesToResponse(cachedBytes)
-		return []*http.Response{res}, err
+		res, err := bytesToStoredResponse(cachedBytes)
+		return []timedResponse{res}, err
 	}
-	return []*http.Response{}, nil
+	return []timedResponse{}, nil
 }
 
 type CacheUpdate struct {
@@ -205,7 +206,7 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 				if err != nil {
 					panic(err)
 				}
-				if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
+				if cacheable, expiration := a.shouldCache(updatedResponse.response); cacheable {
 					a.save(getKey(req), updatedResponse, expiration)
 				}
 			}()
@@ -214,15 +215,15 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 			if err != nil {
 				panic(err)
 			}
-			if cacheable, expiration := a.shouldCache(updatedResponse); cacheable {
+			if cacheable, expiration := a.shouldCache(updatedResponse.response); cacheable {
 				a.save(getKey(req), updatedResponse, expiration)
 			}
 		}
 	}
 }
 
-func (a *AlwaysCache) save(key string, res *http.Response, exp time.Time) {
-	responseBytes, err := responseToBytes(res)
+func (a *AlwaysCache) save(key string, sRes timedResponse, exp time.Time) {
+	responseBytes, err := storedResponseToBytes(sRes)
 	if err != nil {
 		panic(err)
 	}
@@ -234,7 +235,7 @@ func (a *AlwaysCache) save(key string, res *http.Response, exp time.Time) {
 }
 
 // fetch the resource specified in the incoming request from the origin
-func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
+func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	req, err := http.NewRequest(r.Method, a.originURL.String()+r.URL.RequestURI(), r.Body)
 	copyHeader(req.Header, r.Header)
 	req.Header.Set("Host", a.originURL.Host)
@@ -245,7 +246,12 @@ func (a *AlwaysCache) fetch(r *http.Request) (*http.Response, error) {
 		panic(err)
 	}
 	log.Trace().Msgf("Executing request %+v", *req)
-	return a.client.Do(req)
+
+	timedRes := timedResponse{requestTime: time.Now()}
+	originResponse, err := a.client.Do(req)
+	timedRes.responseTime = time.Now()
+	timedRes.response = originResponse
+	return timedRes, err
 }
 
 func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
@@ -429,7 +435,7 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if cacheable, exp := a.shouldCache(res); cacheable {
+	if cacheable, exp := a.shouldCache(res.response); cacheable {
 		a.save(key, res, exp)
 		return true, nil
 	}

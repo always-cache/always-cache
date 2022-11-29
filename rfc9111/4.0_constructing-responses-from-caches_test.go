@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConstructResponse(t *testing.T) {
@@ -27,7 +28,7 @@ func TestConstructResponse(t *testing.T) {
 		TLS:              &tls.ConnectionState{},
 	}
 	r.Header.Add("test", "header")
-	res := ConstructResponse(&r)
+	res := ConstructResponse(&r, time.Now(), time.Now())
 
 	if res.StatusCode != 200 {
 		t.Fatalf("Status code is %d", res.StatusCode)

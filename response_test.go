@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResponseToBytesBodyIntact(t *testing.T) {
@@ -30,5 +32,48 @@ This is the body`
 	}
 	if fmt.Sprintf("%s", body) != "This is the body" {
 		t.Fatalf("Body: %s", body)
+	}
+}
+
+func TestTimedResponseSerialization(t *testing.T) {
+	res := http.Response{
+		Status:           "",
+		StatusCode:       201,
+		Proto:            "",
+		ProtoMajor:       0,
+		ProtoMinor:       0,
+		Header:           map[string][]string{},
+		Body:             nil,
+		ContentLength:    0,
+		TransferEncoding: []string{},
+		Close:            false,
+		Uncompressed:     false,
+		Trailer:          map[string][]string{},
+		Request:          &http.Request{},
+		TLS:              &tls.ConnectionState{},
+	}
+	res.Header.Add("Test", "-ing")
+	// create times now and now + 1s
+	reqTime := time.Now()
+	resTime := reqTime.Add(time.Second)
+	bts, err := storedResponseToBytes(timedResponse{
+		response:     &res,
+		responseTime: resTime,
+		requestTime:  reqTime,
+	})
+	if err != nil {
+		t.Fatalf("Error creating bytes: %+v", err)
+	}
+	// deserialize
+	res2, err := bytesToStoredResponse(bts)
+	if err != nil {
+		t.Fatalf("Error creating response: %+v", err)
+	}
+	// check header, times
+	if res2.response.Header.Get("Test") != "-ing" {
+		t.Fatalf("Test header wrong %+v", res2.response.Header)
+	}
+	if res2.response.Header.Get("Response-Time") != "" || res2.response.Header.Get("Response-Time") != "" {
+		t.Fatalf("Wrong amount of headers %+v", res2.response.Header)
 	}
 }
