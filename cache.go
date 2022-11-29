@@ -336,7 +336,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 
 	// get resource generation date
 	if dateHeader := res.Header.Get("Date"); dateHeader != "" {
-		if dateTime, err := time.Parse(time.RFC1123, dateHeader); err == nil {
+		if dateTime, err := rfc9111.HttpDate(dateHeader); err == nil {
 			date = dateTime
 		} else {
 			log.Trace().Err(err).Msg("Error parsing expires header")
@@ -363,7 +363,7 @@ func (a *AlwaysCache) shouldCache(res *http.Response) (bool, time.Time) {
 	} else {
 		// since no max age specified, see if we have expires header
 		if expiresHeader := res.Header.Get("Expires"); expiresHeader != "" {
-			if expTime, err := time.Parse(time.RFC1123, expiresHeader); err == nil {
+			if expTime, err := rfc9111.HttpDate(expiresHeader); err == nil {
 				expires = expTime
 			} else {
 				log.Trace().Err(err).Msg("Error parsing expires header")

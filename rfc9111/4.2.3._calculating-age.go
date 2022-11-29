@@ -36,7 +36,7 @@ func age_value(res *http.Response) time.Duration {
 // §        field and for requirements regarding responses without it.
 func date_value(res *http.Response) time.Time {
 	if dateHeader := res.Header.Get("Date"); dateHeader != "" {
-		if date, err := httpDate(dateHeader); err == nil {
+		if date, err := HttpDate(dateHeader); err == nil {
 			return date
 		}
 	}

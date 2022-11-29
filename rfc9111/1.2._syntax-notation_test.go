@@ -11,3 +11,10 @@ func TestToDeltaSeconds(t *testing.T) {
 		t.Fatalf("Delta seconds is %s", s)
 	}
 }
+
+func TestHttpDateRFC850(t *testing.T) {
+	_, err := HttpDate("Thursday, 18-Aug-50 02:01:18 GMT")
+	if err != nil {
+		t.Fatalf("Error parsing date %+v", err)
+	}
+}

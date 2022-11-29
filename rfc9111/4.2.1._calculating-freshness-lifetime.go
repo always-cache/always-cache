@@ -31,7 +31,7 @@ func freshness_lifetime(res *http.Response) time.Duration {
 	// §        Section 6.6.1 of [HTTP]), or
 	if expires, err := getExpires(res); err == nil {
 		// WARNING assuming date header is stored as current date if missing
-		if date, err := httpDate(res.Header.Get("Date")); err == nil {
+		if date, err := HttpDate(res.Header.Get("Date")); err == nil {
 			return expires.Sub(date)
 		}
 	}

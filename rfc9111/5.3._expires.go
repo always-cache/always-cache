@@ -39,7 +39,7 @@ import (
 func getExpires(res *http.Response) (time.Time, error) {
 	// TODO implement max-age check
 
-	if exp, err := httpDate(res.Header.Get("Expires")); err == nil {
+	if exp, err := HttpDate(res.Header.Get("Expires")); err == nil {
 		return exp, err
 	} else {
 		return time.Time{}, err
