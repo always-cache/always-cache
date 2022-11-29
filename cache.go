@@ -139,9 +139,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	send(w, downstreamResponse, cacheStatus)
 
-	if updates := getUpdates(res.response); len(updates) > 0 {
-		a.saveUpdates(updates)
-	}
+	a.updateIfNeeded(res.response)
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
@@ -152,6 +150,12 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 		return []timedResponse{res}, err
 	}
 	return []timedResponse{}, nil
+}
+
+func (a *AlwaysCache) updateIfNeeded(upRes *http.Response) {
+	if updates := getUpdates(upRes); len(updates) > 0 {
+		a.saveUpdates(updates)
+	}
 }
 
 type CacheUpdate struct {
