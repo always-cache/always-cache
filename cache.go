@@ -126,7 +126,9 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Trace().Msg("Forwarding to origin")
 	res, err := a.fetch(upstreamRequest)
 	if err != nil {
-		panic(err)
+		http.Error(w, "Error contacting origin", http.StatusBadGateway)
+		log.Error().Err(err).Msg("Could not fetch response from server")
+		return
 	}
 	log.Trace().Msg("Got response from origin")
 
