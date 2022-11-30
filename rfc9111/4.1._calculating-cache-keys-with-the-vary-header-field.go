@@ -13,7 +13,12 @@ import "net/http"
 // §     to be stored).
 func headerFieldsMatch(req *http.Request, res *http.Response) bool {
 	// TODO
-	return res.Header.Get("Vary") == ""
+	for _, item := range res.Header.Values("Vary") {
+		if item != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // §     The header fields from two requests are defined to match if and only
