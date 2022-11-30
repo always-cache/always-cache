@@ -287,6 +287,20 @@ func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
 	return err
 }
 
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		// this is a warkaround to remove default headers sent by an upstream proxy
+		// some servers do not like the presence of these headers in the downstream request
+		// also remove conditional request headers, since they are not supported
+		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" &&
+			k != "If-None-Match" && k != "If-Modified-Since" {
+			for _, v := range vv {
+				dst.Add(k, v)
+			}
+		}
+	}
+}
+
 // getURL returns the URL to update the cache for from the `Cache-Update` header parameter.
 // The URL is the first parameter in the header value (separated by a semicolon).
 func getURL(r *http.Request, update string) *url.URL {

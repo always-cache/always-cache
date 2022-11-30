@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"time"
@@ -12,28 +11,27 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		// this is a warkaround to remove default headers sent by an upstream proxy
-		// some servers do not like the presence of these headers in the downstream request
-		// also remove conditional request headers, since they are not supported
-		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" &&
-			k != "If-None-Match" && k != "If-Modified-Since" {
-			for _, v := range vv {
-				dst.Add(k, v)
-			}
-		}
-	}
+var (
+	configFilenameFlag string
+	legacyModeFlag     bool
+	verbosityTraceFlag bool
+)
+
+func init() {
+	flag.StringVar(&configFilenameFlag, "config", "config.yml", "Path to config file")
+	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
+	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
+	flag.Parse()
 }
 
 func main() {
-	configFile := flag.String("config", "config.yml", "Path to config file")
-	legacyMode := flag.Bool("legacy", false, "Legacy mode: do not update, only invalidate if needed")
-	flag.Parse()
+	logLevel := zerolog.DebugLevel
+	if verbosityTraceFlag {
+		logLevel = zerolog.TraceLevel
+	}
+	log.Logger = log.Level(logLevel).Output(zerolog.ConsoleWriter{Out: os.Stdout})
 
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
-
-	config, err := getConfig(*configFile)
+	config, err := getConfig(configFilenameFlag)
 	if err != nil {
 		panic(err)
 	}
@@ -50,11 +48,11 @@ func main() {
 	}
 
 	acache := AlwaysCache{
-		invalidateOnly: *legacyMode,
+		invalidateOnly: legacyModeFlag,
 	}
 
 	// if updates not disabled, update every minute
-	if !origin.DisableUpdate {
+	if !legacyModeFlag && !origin.DisableUpdate {
 		acache.updateTimeout = time.Minute
 	}
 
