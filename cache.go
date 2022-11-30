@@ -121,8 +121,10 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Warn().Err(err).Msg("Error getting responses")
 	}
 
+	upstreamRequest := rfc9111.GetForwardRequest(r)
+
 	log.Trace().Msg("Forwarding to origin")
-	res, err := a.fetch(r)
+	res, err := a.fetch(upstreamRequest)
 	if err != nil {
 		panic(err)
 	}

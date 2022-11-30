@@ -28,6 +28,11 @@ func storableHeader(header http.Header) http.Header {
 	// §     *  Likewise, some fields' semantics require them to be removed before
 	// §        forwarding the message, and this MAY be implemented by doing so
 	// §        before storage; see Section 7.6.1 of [HTTP] for some examples.
+	h.Del("Proxy-Connection")
+	h.Del("Keep-Alive")
+	h.Del("TE")
+	h.Del("Transfer-Encoding")
+	h.Del("Upgrade")
 	// §
 	// §     *  The no-cache (Section 5.2.2.4) and private (Section 5.2.2.7) cache
 	// §        directives can have arguments that prevent storage of header
@@ -58,4 +63,21 @@ func getListHeader(header http.Header, field string) []string {
 		}
 	}
 	return list
+}
+
+// TODO move to http rfc
+func GetForwardRequest(req *http.Request) *http.Request {
+	r := req.Clone(req.Context())
+
+	for _, header := range getListHeader(r.Header, "Connection") {
+		r.Header.Del(header)
+	}
+	r.Header.Del("Connection")
+	r.Header.Del("Proxy-Connection")
+	r.Header.Del("Keep-Alive")
+	r.Header.Del("TE")
+	r.Header.Del("Transfer-Encoding")
+	r.Header.Del("Upgrade")
+
+	return r
 }
