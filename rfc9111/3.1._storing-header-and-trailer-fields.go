@@ -1,6 +1,9 @@
 package rfc9111
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // §  3.1.  Storing Header and Trailer Fields
 func storableHeader(header http.Header) http.Header {
@@ -17,6 +20,9 @@ func storableHeader(header http.Header) http.Header {
 	// §        it are required by Section 7.6.1 of [HTTP] to be removed before
 	// §        forwarding the message.  This MAY be implemented by doing so
 	// §        before storage.
+	for _, header := range getListHeader(header, "Connection") {
+		h.Del(header)
+	}
 	h.Del("Connection")
 	// §
 	// §     *  Likewise, some fields' semantics require them to be removed before
@@ -41,4 +47,15 @@ func storableHeader(header http.Header) http.Header {
 // §     fields.
 func storableTrailer(trailer http.Header) http.Header {
 	return make(http.Header)
+}
+
+// TODO move to http rfc
+func getListHeader(header http.Header, field string) []string {
+	list := make([]string, 0)
+	for _, hdr := range header.Values(field) {
+		for _, item := range strings.Split(hdr, ",") {
+			list = append(list, strings.TrimSpace(item))
+		}
+	}
+	return list
 }
