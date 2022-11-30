@@ -142,7 +142,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	send(w, downstreamResponse, cacheStatus)
 
-	a.updateIfNeeded(res.response)
+	a.updateIfNeeded(r, res.response)
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
@@ -155,8 +155,8 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 	return []timedResponse{}, nil
 }
 
-func (a *AlwaysCache) updateIfNeeded(upRes *http.Response) {
-	if updates := getUpdates(upRes); len(updates) > 0 {
+func (a *AlwaysCache) updateIfNeeded(downReq *http.Request, upRes *http.Response) {
+	if updates := getUpdates(downReq, upRes); len(updates) > 0 {
 		if !a.invalidateOnly {
 			a.saveUpdates(updates)
 		} else {
@@ -170,15 +170,26 @@ type CacheUpdate struct {
 	Delay time.Duration
 }
 
-func getUpdates(res *http.Response) []CacheUpdate {
-	if res.Request.Method == http.MethodGet {
+func getUpdates(clientRequest *http.Request, res *http.Response) []CacheUpdate {
+	invalidateUris := rfc9111.GetInvalidateURIs(clientRequest, res)
+	log.Trace().Msgf("RFC9111 invalidate uris: %+v", invalidateUris)
+	updates := make([]CacheUpdate, len(invalidateUris))
+	for i, uri := range invalidateUris {
+		if u, err := url.Parse(uri); err == nil {
+			updates[i] = CacheUpdate{Path: u.Path}
+		} else {
+			log.Warn().Err(err).Msg("Could not parse uri")
+		}
+	}
+	updates = append(updates, getUpdateHeaderUpdates(clientRequest, res)...)
+	return updates
+}
+
+func getUpdateHeaderUpdates(clientRequest *http.Request, res *http.Response) []CacheUpdate {
+	if !rfc9111.UnsafeRequest(clientRequest) {
 		return nil
 	}
 	updates := make([]CacheUpdate, 0)
-	// only auto-add self if success
-	if res.StatusCode == http.StatusOK {
-		updates = append(updates, CacheUpdate{Path: res.Request.RequestURI})
-	}
 	for _, update := range res.Header.Values("Cache-Update") {
 		cu := CacheUpdate{}
 		// path is the first element

@@ -11,15 +11,15 @@ import (
 // §     POST, or DELETE have the potential for changing state on the origin
 // §     server, intervening caches are required to invalidate stored
 // §     responses to keep their contents up to date.
-func getInvalidateURIs(clientRequest *http.Request, originResponse *http.Response) []string {
+func GetInvalidateURIs(clientRequest *http.Request, originResponse *http.Response) []string {
 
-	if unsafeRequest(clientRequest) && nonErrorResponse(originResponse) {
+	if UnsafeRequest(clientRequest) && nonErrorResponse(originResponse) {
 		uris := make([]string, 0)
 
 		// §     A cache MUST invalidate the target URI (Section 7.1 of [HTTP]) when
 		// §     it receives a non-error status code in response to an unsafe request
 		// §     method (including methods whose safety is unknown).
-		uris = append(uris, originResponse.Request.RequestURI)
+		uris = append(uris, clientRequest.URL.String())
 
 		// §     A cache MAY invalidate other URIs when it receives a non-error status
 		// §     code in response to an unsafe request method (including methods whose
@@ -77,6 +77,6 @@ func getUri(rawURL string) (string, error) {
 }
 
 // TODO move to http rfc module
-func unsafeRequest(req *http.Request) bool {
+func UnsafeRequest(req *http.Request) bool {
 	return req.Method != "GET" && req.Method != "HEAD"
 }
