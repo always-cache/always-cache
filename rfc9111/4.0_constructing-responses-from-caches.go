@@ -71,7 +71,7 @@ func constructResponse(storedResponse *http.Response, responseTime, requestTime 
 	// §     replacing any present in the response with a value equal to the
 	// §     stored response's current_age; see Section 4.2.3.
 	age := current_age(storedResponse, responseTime, requestTime)
-	res.Header.Add("Age", toDeltaSeconds(age))
+	res.Header.Set("Age", toDeltaSeconds(age))
 
 	return res
 }
