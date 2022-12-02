@@ -21,10 +21,11 @@ func init() {
 	flag.StringVar(&configFilenameFlag, "config", "config.yml", "Path to config file")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
-	flag.Parse()
 }
 
 func main() {
+	flag.Parse()
+
 	logLevel := zerolog.DebugLevel
 	if verbosityTraceFlag {
 		logLevel = zerolog.TraceLevel

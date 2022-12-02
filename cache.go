@@ -23,17 +23,17 @@ import (
 )
 
 type AlwaysCache struct {
+	initialized   bool
+	port          int
+	cache         CacheProvider
+	originURL     *url.URL
+	updateTimeout time.Duration
+	defaults      Defaults
+	paths         []Path
+	client        http.Client
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
 	invalidateOnly bool
-	initialized    bool
-	port           int
-	cache          CacheProvider
-	originURL      *url.URL
-	updateTimeout  time.Duration
-	defaults       Defaults
-	paths          []Path
-	client         http.Client
 }
 
 type Path struct {
@@ -160,33 +160,21 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 }
 
 func (a *AlwaysCache) updateIfNeeded(downReq *http.Request, upRes *http.Response) {
-	if updates := getUpdates(downReq, upRes); len(updates) > 0 {
-		if !a.invalidateOnly {
-			a.saveUpdates(updates)
-		} else {
-			a.invalidateUpdates(updates)
-		}
+	if a.invalidateOnly {
+		a.invalidateUris(
+			rfc9111.GetInvalidateURIs(downReq, upRes))
+	} else {
+
+		a.revalidateUris(
+			rfc9111.GetInvalidateURIs(downReq, upRes))
 	}
+	a.saveUpdates(
+		getUpdateHeaderUpdates(downReq, upRes))
 }
 
 type CacheUpdate struct {
 	Path  string
 	Delay time.Duration
-}
-
-func getUpdates(clientRequest *http.Request, res *http.Response) []CacheUpdate {
-	invalidateUris := rfc9111.GetInvalidateURIs(clientRequest, res)
-	log.Trace().Msgf("RFC9111 invalidate uris: %+v", invalidateUris)
-	updates := make([]CacheUpdate, len(invalidateUris))
-	for i, uri := range invalidateUris {
-		if u, err := url.Parse(uri); err == nil {
-			updates[i] = CacheUpdate{Path: u.Path}
-		} else {
-			log.Warn().Err(err).Msg("Could not parse uri")
-		}
-	}
-	updates = append(updates, getUpdateHeaderUpdates(clientRequest, res)...)
-	return updates
 }
 
 func getUpdateHeaderUpdates(clientRequest *http.Request, res *http.Response) []CacheUpdate {
@@ -227,10 +215,24 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 	}
 }
 
-func (a *AlwaysCache) invalidateUpdates(updates []CacheUpdate) {
-	for _, update := range updates {
-		log.Trace().Str("update", update.Path).Msgf("Invalidating cache based on header")
-		req, _ := http.NewRequest("GET", update.Path, nil)
+func (a *AlwaysCache) revalidateUris(uris []string) {
+	for _, uri := range uris {
+		log.Trace().Str("uri", uri).Msgf("Revalidating possibly stored response")
+		req, _ := http.NewRequest("GET", uri, nil)
+		key := getKey(req)
+		if a.cache.Has(key) {
+			_, err := a.saveRequest(req, getKey(req))
+			if err != nil {
+				log.Error().Err(err).Str("key", key).Msg("Error revalidating stored request")
+			}
+		}
+	}
+}
+
+func (a *AlwaysCache) invalidateUris(uris []string) {
+	for _, uri := range uris {
+		log.Trace().Str("uri", uri).Msgf("Invalidating stored response")
+		req, _ := http.NewRequest("GET", uri, nil)
 		a.cache.Purge(getKey(req))
 	}
 }

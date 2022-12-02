@@ -17,23 +17,33 @@ Caching behavior (such as content expiry) is controlled via HTTP response header
 
 [Slides](intro-nordicjs-2022/100-http-cache-hit-rate-ericselin.pdf) [Transcript-ish](intro-nordicjs-2022/100-http-cache-hit-rate-ericselin.md)
 
-## Efficient cache updating
+## Revalidate rather than invalidate
 
-The caching behavior of `Always-Cache` is managed mainly via response headers - just like any other HTTP cache. Cache entries are updated both automatically when the content is about to become stale, and on demand when content is updated (e.g. via a `POST` request).
+The caching behavior of `Always-Cache` follows the HTTP caching standard (RFC 9111) and is managed mainly via response headers - just like any other HTTP cache. Cache entries are updated both automatically when the content is about to become stale, and on demand when content is updated (e.g. via a `POST` request).
 
 ### Automatic updates of stale content
 
-Before a cached response becomes stale, the cache is updated with a new response. This behavior is described in the HTTP Caching RFC. You can specify your desired caching with the standard `Cache-Control` header or the custom `Always-Cache-Control` header. The advantage of the latter is that it only affects `Always-Cache` and is not sent to the client.
+Before a cached response becomes stale, the cache is updated with a new response (rather than marking the response stale). When this happens is determined based on [response freshness](https://www.rfc-editor.org/rfc/rfc9111#name-freshness), following the standard.
 
 ### On-demand updates of updated content
 
-Cached URLs that need to be updated are defined in the `Always-Cache-Update` header. For instance, when a client issues a `POST` request to your backend that updates data shown on `/index.html`, just pass that URL in the header. (Standard HTTP caching does not take into account how to invalidate (i.e. pruge) content from caches, which is a shame.)
+When content is updated, the cache is updated (rather than invalidated) as is needed. Which URLs to update follows the [standard invalidation rules](https://www.rfc-editor.org/rfc/rfc9111#name-invalidating-stored-respons), and happens when `Always-Cache` receives an ["unsafe request"](https://www.rfc-editor.org/rfc/rfc9110.html#name-common-method-properties). In addition to the standard invalidation methods, it is also possible to use the custom `Cache-Update` HTTP header (see below).
+
+## Caching safe POST requests
+
+The `POST` HTTP method is by definition unsafe. However, in practice, POST requests are oftentimes used only for reading data and are thus "safe". It is, for instance, very common for complicated read operations from a web frontend to use the body of a POST request to transmit query parameters. GraphQL is an entire query language / API that works exclusively on top of POST requests. While requests that change state - unsafe requests - should never be cached, POST requests are in practice not always unsafe in the wild. It would of course be very useful to cache such safe POST requests. This is exactly what `Always-Cache` does.
+
+In order to cache a response to a POST request, set explicit freshness for the response and indicate that this request was safe with the `safe` directive - e.g. `Cache-Control: s-maxage=600; safe`. Then future POST requests with the same body will receive the cached response (given the response is still fresh, of course).
+
+**This behavior technically violates the HTTP caching standard. However, this is with good reason and is applied on an opt-in basis by setting explicit freshness information.**
+
+> Note that at this time, automatic revalidation of POST requests does not work.
 
 ## Pre-caching, i.e. cache warming
 
 > Pre-caching is not yet ported to open source version
 
-Traditionally, HTTP caches store responses when requests come in for a particular URL. However, serving cached content means even the first request should be served from cache. `Always-Cache` will therefore cache the entire site or API before any requests come in. You can think of this as Ahead-Of-Time caching instead of Just-In-Time caching. Or simply "pre-caching" or "cache warming".
+Traditionally, HTTP caches store responses when requests come in for a particular URL. However, serving only cached content means even the first request should be served from cache. `Always-Cache` will therefore cache the entire site or API before any requests come in. You can think of this as Ahead-Of-Time caching instead of Just-In-Time caching. Or simply "pre-caching" or "cache warming".
 
 In order for pre-caching to work, `Always-Cache` needs to know all possible URLs in order to cache them. URLs are collected from the following sources:
 
@@ -46,58 +56,33 @@ Note that any URLs not listed in the sitemap (which is meant to list HTML pages 
 
 ## Controlling caching behavior
 
-The caching behavior of `always-cache` is controlled via HTTP headers. The specific headers used differ between read requests (e.g. GET) that should always be served from cache, and write requests (e.g. POST) that change data and content and should be sent to the downstream server.
+`Always-Cache` follows the HTTP caching standard (RFC 9111). However, the following extensions to the standards are defined:
 
-### Read requests
+### `safe` extension cache directive
 
-Successful `GET` requests are always cached (except if explicitly forbidden). The caching behavior is set in the `Cache-Control` header, and follows the HTTP caching standard (RFC 7234). **The `Always-Cache-Control` header is not yet supported.**
+Indicates that the operation at the origin server can be considered "safe" as defined in the HTTP standard. In practice this means that the response may be cached, even if the request was unsafe per the spec. If the response is cached, it MUST NOT be reused unless the body of the incoming request semantically matches the body of the request that led to the stored response.
 
-#### `Cache-Control` header
+### `Cache-Fetch` HTTP response header
 
-Syntax:
+The `Cache-Fetch` header can be used as an alterative to the invalidation methods explicitly defined in the standard. It allows more flexibility and control around cache updates. Most notably it will always fetch a response for caching, even if no corresponding response already exists in the cache.
 
-```
-Cache-Control: <directive>+
-```
-
-Directives:
-
-- `s-maxage=N`: consider the response "fresh" for *N* seconds.
-- `max-age=N`: consider the response "fresh" for *N* seconds (used only if no `s-maxage`).
-- `no-cache`: do not cache the response.
-
-Example:
+#### Syntax
 
 ```
-Cache-Control: max-age=3600
+cache-fetch-header = "cache-fetch:" SP cache-fetch-string
+cache-fetch-string = cache-fetch-path *( ";" SP cache-fetch-attr )
+cache-fetch-path   = self / <any CHAR except CTLs or ";">
+cache-fetch-attr   = delay-attr
+delay-attr         = "delay=" delta-seconds
 ```
 
-### Write requests
+#### Path
 
-Write requests (requests that change data) are never cached. However, by their very nature, these requests change data in some way. This means that cached responses most probably need to be updated. As per the RFC recommendation, the current page is updated by default. I.e. `POST /blog-posts/my-blog-post` will update the cache for `GET /blog-posts/my-blog-post`. Oftentimes there is also a need to update a list page or some other page(s) as well (e.g. `/blog-posts/all`. This can be achieved with the `Cache-Update` header.
+The path of the response(s) to revalidate is a URI and may be relative to the current request. The `self` token refers to the URI of the current request.
 
-#### `Cache-Update` header
+#### Delay attribute
 
-Syntax:
-
-```
-Cache-Update: [ <url-path> | <directive>+ ]
-```
-
-`<url-path>` may be relative to the current URL, i.e. the URL of the write request. If no URL path (`<url-path>`) is specified, the directives take effect on the current url.
-
-Directives:
-
-- `delay=N`: delay updating the cache by *N* seconds; implies `no-wait`.
-- `no-wait`: finish the response without waiting for updates to conclude. **not implemented**
-- `no-update`: do not update the cache (useful only for the current URL, of course). **not implemented**
-
-Example:
-
-```
-Cache-Update: ../list
-Cache-Update: no-wait; /blog-posts/all delay=5
-```
+Delay updating the cache by the specified number of seconds.
 
 ## Usage
 

@@ -28,6 +28,8 @@ type CacheProvider interface {
 	// Purge removes the cache entry for the given key.
 	// It is a utility method that is not used by the cache middleware.
 	Purge(key string)
+	// Has checks if the specified key exists in the cache.
+	Has(key string) bool
 }
 
 type memCacheEntry struct {
@@ -85,6 +87,13 @@ func (m MemCache) Purge(key string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	delete(m.db, key)
+}
+
+func (m MemCache) Has(key string) bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	_, ok := m.db[key]
+	return ok
 }
 
 type SQLiteCache struct {
@@ -150,4 +159,16 @@ func (s SQLiteCache) Purge(key string) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (s SQLiteCache) Has(key string) bool {
+	result, err := s.db.Exec("SELECT 1 FROM cache WHERE key = ?", key)
+	if err != nil {
+		panic(err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	return rows > 0
 }
