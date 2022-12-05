@@ -1,6 +1,11 @@
 package rfc9111
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+
+	"github.com/rs/zerolog/log"
+)
 
 // §  4.1.  Calculating Cache Keys with the Vary Header Field
 // §
@@ -13,12 +18,22 @@ import "net/http"
 // §     to be stored).
 func headerFieldsMatch(req *http.Request, res *http.Response) bool {
 	// TODO
+	ceMatch := false
 	for _, item := range res.Header.Values("Vary") {
-		if item != "" {
+		log.Trace().Msgf("Checking Vary header %s", item)
+		// if vary is only for content-encoding, and the stored header matches
+		// that of the request, we are good to go
+		if strings.ToLower(item) == "accept-encoding" {
+			for _, accepted := range strings.Split(req.Header.Get("Accept-Encoding"), ", ") {
+				if accepted == res.Header.Get("Content-Encoding") {
+					ceMatch = true
+				}
+			}
+		} else if item != "" {
 			return false
 		}
 	}
-	return true
+	return ceMatch
 }
 
 // §     The header fields from two requests are defined to match if and only
