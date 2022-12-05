@@ -91,7 +91,7 @@ func main() {
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
-		acache.updateTimeout = time.Minute
+		acache.updateTimeout = time.Second * 15
 	}
 
 	if origin == "" {

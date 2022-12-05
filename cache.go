@@ -133,9 +133,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Trace().Msg("Got response from origin")
 
 	// set default cache-control header if nothing specified by origin
-	if a.defaults.CacheControl != "" && res.response.Header.Get("Cache-Control") == "" {
-		res.response.Header.Set("Cache-Control", a.defaults.CacheControl)
-	}
+	a.addDefaultCacheControl(res.response)
 
 	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
 	res.response = downstreamResponse
@@ -147,6 +145,12 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	send(w, downstreamResponse, cacheStatus)
 
 	a.updateIfNeeded(r, res.response)
+}
+
+func (a *AlwaysCache) addDefaultCacheControl(res *http.Response) {
+	if a.defaults.CacheControl != "" && res.Header.Get("Cache-Control") == "" {
+		res.Header.Set("Cache-Control", a.defaults.CacheControl)
+	}
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
@@ -374,6 +378,7 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	}
 	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
 		res.response = dRes
+		a.addDefaultCacheControl(res.response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {
