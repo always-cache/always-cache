@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"net/url"
 	"os"
 	"time"
@@ -12,13 +11,21 @@ import (
 )
 
 var (
-	configFilenameFlag string
-	legacyModeFlag     bool
-	verbosityTraceFlag bool
+	configFilenameFlag      string
+	portFlag                int
+	originFlag              string
+	providerFlag            string
+	defaultCacheControlFlag string
+	legacyModeFlag          bool
+	verbosityTraceFlag      bool
 )
 
 func init() {
-	flag.StringVar(&configFilenameFlag, "config", "config.yml", "Path to config file")
+	flag.StringVar(&configFilenameFlag, "config", "", "Path to config file")
+	flag.StringVar(&originFlag, "origin", "", "Origin to proxy to (overrides config)")
+	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
+	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
+	flag.StringVar(&defaultCacheControlFlag, "default", "", "Default Cache-Control header (overrides config)")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 }
@@ -32,56 +39,74 @@ func main() {
 	}
 	log.Logger = log.Level(logLevel).Output(zerolog.ConsoleWriter{Out: os.Stdout})
 
-	config, err := getConfig(configFilenameFlag)
-	if err != nil {
-		panic(err)
-	}
-
-	if config.Port <= 0 || len(config.Origins) != 1 {
-		fmt.Println("Need port and exactly one origin")
-		os.Exit(1)
-	}
-
-	origin := config.Origins[0]
-
-	if len(origin.Paths) > 0 {
-		log.Fatal().Msg("Path-based overrides not yet supported")
-	}
-
 	acache := AlwaysCache{
 		invalidateOnly: legacyModeFlag,
 	}
 
-	// if updates not disabled, update every minute
-	if !legacyModeFlag && !origin.DisableUpdate {
-		acache.updateTimeout = time.Minute
+	var origin string
+
+	if configFilenameFlag != "" {
+		config, err := getConfig(configFilenameFlag)
+		if err != nil {
+			panic(err)
+		}
+
+		if config.Port <= 0 || len(config.Origins) != 1 {
+			log.Fatal().Msg("Need port and exactly one origin")
+		}
+
+		originConfig := config.Origins[0]
+
+		if len(originConfig.Paths) > 0 {
+			log.Fatal().Msg("Path-based overrides not yet supported")
+		}
+
+		// set defaults to configured origin defaults
+		acache.defaults = originConfig.Defaults
+
+		// set paths
+		acache.paths = originConfig.Paths
 	}
 
-	// set defaults to configured origin defaults
-	acache.defaults = origin.Defaults
+	if originFlag != "" {
+		origin = originFlag
+	}
 
-	// set paths
-	acache.paths = origin.Paths
+	if defaultCacheControlFlag != "" {
+		acache.defaults = Defaults{
+			CacheControl: defaultCacheControlFlag,
+			SafeMethods:  SafeMethods{},
+		}
+	}
 
 	// use configured provider, panic if none specified
-	switch config.Provider {
+	switch providerFlag {
 	case "sqlite":
 		acache.cache = NewSQLiteCache()
 	case "memory":
 		acache.cache = NewMemCache()
 	default:
-		panic(fmt.Sprintf("Unsupported cache provider: %s", config.Provider))
+		log.Fatal().Msgf("Unsupported cache provider: %s", providerFlag)
+	}
+
+	// if updates not disabled, update every minute
+	if !legacyModeFlag {
+		acache.updateTimeout = time.Minute
+	}
+
+	if origin == "" {
+		log.Fatal().Msg("Please specify origin")
 	}
 
 	// get the downstream server address
-	downstreamURL, err := url.Parse(origin.Origin)
+	downstreamURL, err := url.Parse(origin)
 	if err != nil {
 		panic(err)
 	}
 	acache.originURL = downstreamURL
 
 	// set the port to listen on
-	acache.port = config.Port
+	acache.port = portFlag
 
 	// initialize
 	err = acache.Run()

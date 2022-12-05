@@ -2,7 +2,7 @@
 export CGO_ENABLED=0
 
 dev:
-	gow -s -e go,mod,yml run .
+	gow -s -e go,mod,yml run . -provider memory -default 's-maxage=600' -origin https://www.suffra.se -vv
 
 build:
 	GOOS=linux GOARCH=amd64 go build -o acache
