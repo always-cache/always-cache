@@ -63,6 +63,8 @@ func main() {
 			log.Fatal().Msg("Path-based overrides not yet supported")
 		}
 
+		origin = originConfig.Origin
+
 		// set defaults to configured origin defaults
 		acache.defaults = originConfig.Defaults
 
