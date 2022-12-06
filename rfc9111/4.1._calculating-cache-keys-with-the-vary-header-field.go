@@ -18,12 +18,16 @@ import (
 // §     to be stored).
 func headerFieldsMatch(req *http.Request, res *http.Response) bool {
 	// TODO
-	ceMatch := false
+	ceMatch := true
 	for _, item := range res.Header.Values("Vary") {
 		log.Trace().Msgf("Checking Vary header %s", item)
 		// if vary is only for content-encoding, and the stored header matches
 		// that of the request, we are good to go
 		if strings.ToLower(item) == "accept-encoding" {
+			ceMatch = false
+			if ce := res.Header.Get("Content-Encoding"); ce == "" || ce == "identity" {
+				ceMatch = true
+			}
 			for _, accepted := range strings.Split(req.Header.Get("Accept-Encoding"), ", ") {
 				if accepted == res.Header.Get("Content-Encoding") {
 					ceMatch = true
