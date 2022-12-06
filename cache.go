@@ -34,6 +34,8 @@ type AlwaysCache struct {
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
 	invalidateOnly bool
+	// Replace origin url with this url in text cantent
+	replaceOriginUrl string
 }
 
 type Path struct {
@@ -121,7 +123,14 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Warn().Err(err).Msg("Error getting responses")
 	}
 
+	cacheStatus.Forward(CacheStatusFwdMiss)
+
 	upstreamRequest := rfc9111.GetForwardRequest(r)
+
+	// if we have rewrites enabled, disable compression
+	if a.replaceOriginUrl != "" {
+		upstreamRequest.Header.Set("Accept-Encoding", "identity")
+	}
 
 	log.Trace().Msg("Forwarding to origin")
 	res, err := a.fetch(upstreamRequest)
@@ -243,6 +252,11 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 
 func (a *AlwaysCache) save(key string, sRes timedResponse) {
 	responseBytes, err := storedResponseToBytes(sRes)
+	// replace urls if configured and text
+	if a.replaceOriginUrl != "" && strings.HasPrefix(sRes.response.Header.Get("Content-Type"), "text/") {
+		log.Trace().Msgf("Replacing origin urls with %s", a.replaceOriginUrl)
+		responseBytes = bytes.ReplaceAll(responseBytes, []byte(a.originURL.String()), []byte(a.replaceOriginUrl))
+	}
 	if err != nil {
 		panic(err)
 	}

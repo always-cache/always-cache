@@ -16,6 +16,7 @@ var (
 	originFlag              string
 	providerFlag            string
 	defaultCacheControlFlag string
+	rewriteOriginUrlFlag    string
 	legacyModeFlag          bool
 	verbosityTraceFlag      bool
 )
@@ -26,6 +27,7 @@ func init() {
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
 	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
 	flag.StringVar(&defaultCacheControlFlag, "default", "", "Default Cache-Control header (overrides config)")
+	flag.StringVar(&rewriteOriginUrlFlag, "rewrite-origin-url", "", "URL to replace origin URL with for text content")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 }
@@ -92,6 +94,10 @@ func main() {
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
 		acache.updateTimeout = time.Second * 15
+	}
+
+	if rewriteOriginUrlFlag != "" {
+		acache.replaceOriginUrl = rewriteOriginUrlFlag
 	}
 
 	if origin == "" {
