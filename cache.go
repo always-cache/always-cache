@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -27,6 +28,7 @@ type AlwaysCache struct {
 	port          int
 	cache         CacheProvider
 	originURL     *url.URL
+	originHost    string
 	updateTimeout time.Duration
 	defaults      Defaults
 	paths         []Path
@@ -34,8 +36,6 @@ type AlwaysCache struct {
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
 	invalidateOnly bool
-	// Replace origin url with this url in text cantent
-	replaceOriginUrl string
 }
 
 type Path struct {
@@ -79,13 +79,22 @@ func (a *AlwaysCache) init() {
 			return http.ErrUseLastResponse
 		},
 	}
+
+	// use provided hostname for origin if configured
+	if a.originHost != "" {
+		a.client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName: a.originHost,
+			},
+		}
+	}
 }
 
 func (a *AlwaysCache) Run() error {
 	// initialize
 	a.init()
 	// start the server
-	log.Info().Msgf("Proxying port %v to %s", a.port, a.originURL)
+	log.Info().Msgf("Proxying port %v to %s with hostname %s", a.port, a.originURL, a.originHost)
 	return http.ListenAndServe(fmt.Sprintf(":%d", a.port), a)
 }
 
@@ -126,11 +135,6 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cacheStatus.Forward(CacheStatusFwdMiss)
 
 	upstreamRequest := rfc9111.GetForwardRequest(r)
-
-	// if we have rewrites enabled, disable compression
-	if a.replaceOriginUrl != "" {
-		upstreamRequest.Header.Set("Accept-Encoding", "identity")
-	}
 
 	log.Trace().Msg("Forwarding to origin")
 	res, err := a.fetch(upstreamRequest)
@@ -252,11 +256,6 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 
 func (a *AlwaysCache) save(key string, sRes timedResponse) {
 	responseBytes, err := storedResponseToBytes(sRes)
-	// replace urls if configured and text
-	if a.replaceOriginUrl != "" && strings.HasPrefix(sRes.response.Header.Get("Content-Type"), "text/") {
-		log.Trace().Msgf("Replacing origin urls with %s", a.replaceOriginUrl)
-		responseBytes = bytes.ReplaceAll(responseBytes, []byte(a.originURL.String()), []byte(a.replaceOriginUrl))
-	}
 	if err != nil {
 		panic(err)
 	}
@@ -273,8 +272,8 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 // fetch the resource specified in the incoming request from the origin
 func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	req, err := http.NewRequest(r.Method, a.originURL.String()+r.URL.RequestURI(), r.Body)
+	req.Host = a.originHost
 	copyHeader(req.Header, r.Header)
-	req.Header.Set("Host", a.originURL.Host)
 	// do not forward connection header, this causes trouble
 	// bug surfaced it cache-tests headers-store-Connection test
 	req.Header.Del("Connection")

@@ -14,20 +14,22 @@ var (
 	configFilenameFlag      string
 	portFlag                int
 	originFlag              string
+	addrFlag                string
+	hostFlag                string
 	providerFlag            string
 	defaultCacheControlFlag string
-	rewriteOriginUrlFlag    string
 	legacyModeFlag          bool
 	verbosityTraceFlag      bool
 )
 
 func init() {
 	flag.StringVar(&configFilenameFlag, "config", "", "Path to config file")
-	flag.StringVar(&originFlag, "origin", "", "Origin to proxy to (overrides config)")
+	flag.StringVar(&originFlag, "origin", "", "Origin URL to proxy to (overrides addr and host)")
+	flag.StringVar(&addrFlag, "addr", "", "Origin IP address to proxy to")
+	flag.StringVar(&hostFlag, "host", "", "Hostname of origin")
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
 	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
 	flag.StringVar(&defaultCacheControlFlag, "default", "", "Default Cache-Control header (overrides config)")
-	flag.StringVar(&rewriteOriginUrlFlag, "rewrite-origin-url", "", "URL to replace origin URL with for text content")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 }
@@ -45,9 +47,9 @@ func main() {
 		invalidateOnly: legacyModeFlag,
 	}
 
-	var origin string
-
 	if configFilenameFlag != "" {
+		log.Warn().Msg("Config file usage is experimental")
+
 		config, err := getConfig(configFilenameFlag)
 		if err != nil {
 			panic(err)
@@ -63,17 +65,11 @@ func main() {
 			log.Fatal().Msg("Path-based overrides not yet supported")
 		}
 
-		origin = originConfig.Origin
-
 		// set defaults to configured origin defaults
 		acache.defaults = originConfig.Defaults
 
 		// set paths
 		acache.paths = originConfig.Paths
-	}
-
-	if originFlag != "" {
-		origin = originFlag
 	}
 
 	if defaultCacheControlFlag != "" {
@@ -98,26 +94,29 @@ func main() {
 		acache.updateTimeout = time.Second * 15
 	}
 
-	if rewriteOriginUrlFlag != "" {
-		acache.replaceOriginUrl = rewriteOriginUrlFlag
-	}
-
-	if origin == "" {
+	// get the downstream server address
+	if originFlag != "" {
+		originUrl, err := url.Parse(originFlag)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Clould not parse url")
+		}
+		acache.originURL = originUrl
+	} else if addrFlag != "" {
+		originUrl, err := url.Parse("https://" + addrFlag)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Clould not parse url")
+		}
+		acache.originURL = originUrl
+		acache.originHost = hostFlag
+	} else {
 		log.Fatal().Msg("Please specify origin")
 	}
-
-	// get the downstream server address
-	downstreamURL, err := url.Parse(origin)
-	if err != nil {
-		panic(err)
-	}
-	acache.originURL = downstreamURL
 
 	// set the port to listen on
 	acache.port = portFlag
 
 	// initialize
-	err = acache.Run()
+	err := acache.Run()
 
 	if err != nil {
 		panic(err)
