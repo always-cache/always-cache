@@ -11,15 +11,14 @@ import (
 )
 
 var (
-	configFilenameFlag      string
-	portFlag                int
-	originFlag              string
-	addrFlag                string
-	hostFlag                string
-	providerFlag            string
-	defaultCacheControlFlag string
-	legacyModeFlag          bool
-	verbosityTraceFlag      bool
+	configFilenameFlag string
+	portFlag           int
+	originFlag         string
+	addrFlag           string
+	hostFlag           string
+	providerFlag       string
+	legacyModeFlag     bool
+	verbosityTraceFlag bool
 )
 
 func init() {
@@ -29,7 +28,6 @@ func init() {
 	flag.StringVar(&hostFlag, "host", "", "Hostname of origin")
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
 	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
-	flag.StringVar(&defaultCacheControlFlag, "default", "", "Default Cache-Control header (overrides config)")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 }
@@ -48,35 +46,17 @@ func main() {
 	}
 
 	if configFilenameFlag != "" {
-		log.Warn().Msg("Config file usage is experimental")
-
 		config, err := getConfig(configFilenameFlag)
 		if err != nil {
 			panic(err)
 		}
 
-		if config.Port <= 0 || len(config.Origins) != 1 {
-			log.Fatal().Msg("Need port and exactly one origin")
+		if len(config.Origins) != 1 {
+			log.Fatal().Msg("Only exactly one origin supported")
 		}
-
-		originConfig := config.Origins[0]
-
-		if len(originConfig.Paths) > 0 {
-			log.Fatal().Msg("Path-based overrides not yet supported")
-		}
-
-		// set defaults to configured origin defaults
-		acache.defaults = originConfig.Defaults
 
 		// set paths
-		acache.paths = originConfig.Paths
-	}
-
-	if defaultCacheControlFlag != "" {
-		acache.defaults = Defaults{
-			CacheControl: defaultCacheControlFlag,
-			SafeMethods:  SafeMethods{},
-		}
+		acache.rules = config.Origins[0].Rules
 	}
 
 	// use configured provider, panic if none specified

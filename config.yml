@@ -1,16 +1,10 @@
-port: 8080
-provider: memory
 origins:
-  - origin: https://ericselin.dev
-    host: esdev.localhost
-    # ten minute default ttl
-    defaults:
-      cacheControl: s-maxage=600
-  # - origin: https://www.arktis3d.com
-  #   host: arktis3d.localhost
-  #   disableUpdate: true
-  #   defaults:
-  #     safeMethods:
-  #       - POST
-  #     # 12h default ttl
-  #     cacheControl: s-maxage=43200
+  -  rules:
+      - path: /wp-login.php
+      - path: /api/compute/compute
+        method: POST
+        default: s-maxage=600
+      - default: s-maxage=600
+        override: s-maxage=3600
+        headers:
+          Vary: Accept-Encoding

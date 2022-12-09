@@ -30,31 +30,20 @@ type AlwaysCache struct {
 	originURL     *url.URL
 	originHost    string
 	updateTimeout time.Duration
-	defaults      Defaults
-	paths         []Path
+	rules         []Rule
 	client        http.Client
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
 	invalidateOnly bool
 }
 
-type Path struct {
-	Prefix   string   `yaml:"prefix"`
-	Defaults Defaults `yaml:"defaults"`
-}
-
-type Defaults struct {
-	CacheControl string      `yaml:"cacheControl"`
-	SafeMethods  SafeMethods `yaml:"safeMethods"`
-}
-
-type SafeMethods struct {
-	m map[string]struct{}
-}
-
-func (m SafeMethods) Has(method string) bool {
-	_, ok := m.m[method]
-	return ok
+type Rule struct {
+	Prefix   string            `yaml:"prefix"`
+	Path     string            `yaml:"path"`
+	Method   string            `yaml:"method"`
+	Default  string            `yaml:"default"`
+	Override string            `yaml:"override"`
+	Headers  map[string]string `yaml:"headers"`
 }
 
 // Init initializes the always-cache instance.
@@ -66,7 +55,6 @@ func (a *AlwaysCache) init() {
 	}
 	a.initialized = true
 
-	log.Trace().Msgf("Defaults: %+v", a.defaults)
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
 		go a.updateCache()
@@ -145,8 +133,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Trace().Msg("Got response from origin")
 
-	// set default cache-control header if nothing specified by origin
-	a.addDefaultCacheControl(res.response)
+	a.applyRules(res.response)
 
 	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
 	res.response = downstreamResponse
@@ -160,10 +147,43 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.updateIfNeeded(r, res.response)
 }
 
-func (a *AlwaysCache) addDefaultCacheControl(res *http.Response) {
-	if a.defaults.CacheControl != "" && res.Header.Get("Cache-Control") == "" {
-		res.Header.Set("Cache-Control", a.defaults.CacheControl)
+func (a *AlwaysCache) applyRules(res *http.Response) {
+	if rule := a.findRule(res); rule != nil {
+		if rule.Override != "" {
+			log.Trace().Msg("Overriding Cache-Control header")
+			res.Header.Set("Cache-Control", rule.Override)
+		} else if rule.Default != "" && res.Header.Get("Cache-Control") == "" {
+			log.Trace().Msg("Applying default Cache-Control header")
+			res.Header.Set("Cache-Control", rule.Default)
+		}
+		for name, value := range rule.Headers {
+			log.Trace().Msgf("Setting header %s", name)
+			res.Header.Set(name, value)
+		}
 	}
+}
+
+func (a *AlwaysCache) findRule(res *http.Response) *Rule {
+	log.Trace().Msgf("Finding rule for request %s:%s", res.Request.Method, res.Request.URL.Path)
+	for _, rule := range a.rules {
+		log.Trace().Msgf("Checking rule %+v", rule)
+		if rule.Method == "" && res.Request.Method != http.MethodGet {
+			continue
+		}
+		if rule.Method != "" && rule.Method != res.Request.Method {
+			continue
+		}
+		if rule.Path == res.Request.URL.Path {
+			return &rule
+		}
+		if rule.Prefix != "" && strings.HasPrefix(res.Request.URL.Path, rule.Prefix) {
+			return &rule
+		}
+		if rule.Path == "" && rule.Prefix == "" {
+			return &rule
+		}
+	}
+	return nil
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
@@ -391,24 +411,13 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	}
 	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
 		res.response = dRes
-		a.addDefaultCacheControl(res.response)
+		a.applyRules(res.response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {
 		return false, err
 	}
 	return false, nil
-}
-
-// getDefaults gets the configuration for the requested path,
-// falling back to the global defaults if no paths match
-func (a *AlwaysCache) getDefaults(r *http.Request) Defaults {
-	for _, path := range a.paths {
-		if strings.HasPrefix(r.URL.Path, path.Prefix) {
-			return path.Defaults
-		}
-	}
-	return a.defaults
 }
 
 // getLogger returns the logger from the request context.
