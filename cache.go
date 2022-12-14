@@ -95,8 +95,12 @@ func (a *AlwaysCache) Run() error {
 // - construct response
 // - store: check we may store
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// TODO defaults from path matches (that we get here) are not used yet!
-	// defaults := a.getDefaults(r)
+	if r.URL.Path == "/.acache-update" {
+		go a.updateAll()
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, "Updating all content...")
+		return
+	}
 
 	log.Trace().Interface("headers", r.Header).Msgf("Incoming request: %s %s", r.Method, r.URL.Path)
 
@@ -190,6 +194,11 @@ rulesLoop:
 					continue rulesLoop
 				}
 			}
+		}
+		// disable unsafe (un-GET) methods for now, they aren't working
+		if rule.Method != "" {
+			log.Warn().Msg("Non-GET method rules not supported")
+			continue
 		}
 		return &rule
 	}
@@ -393,8 +402,8 @@ func (a *AlwaysCache) updateCache() {
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
-			log.Trace().Str("key", key).Time("expiry", expiry).Msg("Updating cache")
 			req, _ := http.NewRequest("GET", key, nil)
+			log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
 			cached, err := a.saveRequest(req, key)
 			// if there was an error, sleep and retry
 			if !cached || err != nil {
@@ -412,6 +421,22 @@ func (a *AlwaysCache) updateCache() {
 			time.Sleep(a.updateTimeout)
 		}
 	}
+}
+
+func (a *AlwaysCache) updateAll() {
+	a.cache.Keys(func(key string) {
+		log.Debug().Msgf("Updating key %s", key)
+		req, err := http.NewRequest("GET", key, nil)
+		if err != nil {
+			log.Warn().Err(err).Msg("Could not create request")
+		}
+		cached, err := a.saveRequest(req, key)
+		if err != nil {
+			log.Warn().Err(err).Msg("Could not create request")
+		} else if !cached {
+			log.Debug().Msg("Update not cached")
+		}
+	})
 }
 
 func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {

@@ -2,7 +2,7 @@ origins:
   -  rules:
       - query:
           preview_id:
-        override: no-cache
+        override: s-maxage=20
       - path: /wp-login.php
       - path: /api/compute/compute
         method: POST

@@ -30,6 +30,8 @@ type CacheProvider interface {
 	Purge(key string)
 	// Has checks if the specified key exists in the cache.
 	Has(key string) bool
+	// Keys calls the given callback for each key
+	Keys(cb func(string))
 }
 
 type memCacheEntry struct {
@@ -94,6 +96,12 @@ func (m MemCache) Has(key string) bool {
 	defer m.mutex.RUnlock()
 	_, ok := m.db[key]
 	return ok
+}
+
+func (m MemCache) Keys(cb func(string)) {
+	for key := range m.db {
+		cb(key)
+	}
 }
 
 type SQLiteCache struct {
@@ -171,4 +179,20 @@ func (s SQLiteCache) Has(key string) bool {
 		panic(err)
 	}
 	return rows > 0
+}
+
+func (s SQLiteCache) Keys(cb func(string)) {
+	rows, err := s.db.Query("SELECT key FROM cache")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return
+		}
+		cb(key)
+	}
 }
