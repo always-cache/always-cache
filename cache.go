@@ -43,6 +43,7 @@ type Rule struct {
 	Method   string            `yaml:"method"`
 	Default  string            `yaml:"default"`
 	Override string            `yaml:"override"`
+	Query    map[string]string `yaml:"query"`
 	Headers  map[string]string `yaml:"headers"`
 }
 
@@ -165,6 +166,7 @@ func (a *AlwaysCache) applyRules(res *http.Response) {
 
 func (a *AlwaysCache) findRule(res *http.Response) *Rule {
 	log.Trace().Msgf("Finding rule for request %s:%s", res.Request.Method, res.Request.URL.Path)
+rulesLoop:
 	for _, rule := range a.rules {
 		log.Trace().Msgf("Checking rule %+v", rule)
 		if rule.Method == "" && res.Request.Method != http.MethodGet {
@@ -173,15 +175,23 @@ func (a *AlwaysCache) findRule(res *http.Response) *Rule {
 		if rule.Method != "" && rule.Method != res.Request.Method {
 			continue
 		}
-		if rule.Path == res.Request.URL.Path {
-			return &rule
+		if rule.Path != "" && rule.Path != res.Request.URL.Path {
+			continue
 		}
-		if rule.Prefix != "" && strings.HasPrefix(res.Request.URL.Path, rule.Prefix) {
-			return &rule
+		if rule.Prefix != "" && !strings.HasPrefix(res.Request.URL.Path, rule.Prefix) {
+			continue
 		}
-		if rule.Path == "" && rule.Prefix == "" {
-			return &rule
+		if len(rule.Query) > 0 {
+			qry := res.Request.URL.Query()
+			for name, value := range rule.Query {
+				if value == "" && !qry.Has(name) {
+					continue rulesLoop
+				} else if qry.Get(name) != value {
+					continue rulesLoop
+				}
+			}
 		}
+		return &rule
 	}
 	return nil
 }
