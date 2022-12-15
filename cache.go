@@ -30,21 +30,11 @@ type AlwaysCache struct {
 	originURL     *url.URL
 	originHost    string
 	updateTimeout time.Duration
-	rules         []Rule
+	rules         Rules
 	client        http.Client
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
 	invalidateOnly bool
-}
-
-type Rule struct {
-	Prefix   string            `yaml:"prefix"`
-	Path     string            `yaml:"path"`
-	Method   string            `yaml:"method"`
-	Default  string            `yaml:"default"`
-	Override string            `yaml:"override"`
-	Query    map[string]string `yaml:"query"`
-	Headers  map[string]string `yaml:"headers"`
 }
 
 // Init initializes the always-cache instance.
@@ -138,7 +128,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Trace().Msg("Got response from origin")
 
-	a.applyRules(res.response)
+	a.rules.Apply(res.response)
 
 	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
 	res.response = downstreamResponse
@@ -150,59 +140,6 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	send(w, downstreamResponse, cacheStatus)
 
 	a.updateIfNeeded(r, res.response)
-}
-
-func (a *AlwaysCache) applyRules(res *http.Response) {
-	if rule := a.findRule(res); rule != nil {
-		if rule.Override != "" {
-			log.Trace().Msg("Overriding Cache-Control header")
-			res.Header.Set("Cache-Control", rule.Override)
-		} else if rule.Default != "" && res.Header.Get("Cache-Control") == "" {
-			log.Trace().Msg("Applying default Cache-Control header")
-			res.Header.Set("Cache-Control", rule.Default)
-		}
-		for name, value := range rule.Headers {
-			log.Trace().Msgf("Setting header %s", name)
-			res.Header.Set(name, value)
-		}
-	}
-}
-
-func (a *AlwaysCache) findRule(res *http.Response) *Rule {
-	log.Trace().Msgf("Finding rule for request %s:%s", res.Request.Method, res.Request.URL.Path)
-rulesLoop:
-	for _, rule := range a.rules {
-		log.Trace().Msgf("Checking rule %+v", rule)
-		if rule.Method == "" && res.Request.Method != http.MethodGet {
-			continue
-		}
-		if rule.Method != "" && rule.Method != res.Request.Method {
-			continue
-		}
-		if rule.Path != "" && rule.Path != res.Request.URL.Path {
-			continue
-		}
-		if rule.Prefix != "" && !strings.HasPrefix(res.Request.URL.Path, rule.Prefix) {
-			continue
-		}
-		if len(rule.Query) > 0 {
-			qry := res.Request.URL.Query()
-			for name, value := range rule.Query {
-				if value == "" && !qry.Has(name) {
-					continue rulesLoop
-				} else if qry.Get(name) != value {
-					continue rulesLoop
-				}
-			}
-		}
-		// disable unsafe (un-GET) methods for now, they aren't working
-		if rule.Method != "" {
-			log.Warn().Msg("Non-GET method rules not supported")
-			continue
-		}
-		return &rule
-	}
-	return nil
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
@@ -446,7 +383,7 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	}
 	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
 		res.response = dRes
-		a.applyRules(res.response)
+		a.rules.Apply(res.response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {
