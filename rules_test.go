@@ -14,6 +14,8 @@ func TestRuleFinder(t *testing.T) {
 
 	rules := Rules{
 		Rule{Prefix: "/wp-", Override: "no-cache"},
+		Rule{Query: map[string]string{"any": ""}, Override: "any qry"},
+		Rule{Query: map[string]string{"val": "value"}, Override: "val qry"},
 		Rule{Override: "default"},
 	}
 
@@ -24,6 +26,19 @@ func TestRuleFinder(t *testing.T) {
 		t.Fatal("Incorrect rule")
 	}
 	if rule := rules.find(makeRes("POST", "/wp-admin")); rule != nil {
+		t.Fatal("Incorrect rule")
+	}
+	// test query string matching
+	if rule := rules.find(makeRes("GET", "/?any")); rule == nil || rule.Override != "any qry" {
+		t.Fatal("Incorrect rule")
+	}
+	if rule := rules.find(makeRes("GET", "/?any=something")); rule == nil || rule.Override != "any qry" {
+		t.Fatal("Incorrect rule")
+	}
+	if rule := rules.find(makeRes("GET", "/?val=value")); rule == nil || rule.Override != "val qry" {
+		t.Fatal("Incorrect rule")
+	}
+	if rule := rules.find(makeRes("GET", "/?val=nomatch")); rule == nil && rule.Override != "default" {
 		t.Fatal("Incorrect rule")
 	}
 }

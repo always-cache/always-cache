@@ -61,7 +61,7 @@ rulesLoop:
 			for name, value := range rule.Query {
 				if value == "" && !qry.Has(name) {
 					continue rulesLoop
-				} else if qry.Get(name) != value {
+				} else if value != "" && qry.Get(name) != value {
 					continue rulesLoop
 				}
 			}
