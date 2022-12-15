@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	responseTimeHeaderName = "Acache-Response-Time"
+	requestTimeHeaderName  = "Acache-Request-Time"
+)
+
 type timedResponse struct {
 	response *http.Response
 	// The value of the clock at the time of the request that resulted in the stored response.
@@ -25,29 +30,29 @@ func bytesToStoredResponse(b []byte) (timedResponse, error) {
 		return sRes, err
 	}
 	sRes.response = res
-	resTimeInt, err := strconv.ParseInt(res.Header.Get("Response-Time"), 10, 64)
+	resTimeInt, err := strconv.ParseInt(res.Header.Get(responseTimeHeaderName), 10, 64)
 	if err != nil {
 		return sRes, err
 	}
-	reqTimeInt, err := strconv.ParseInt(res.Header.Get("Request-Time"), 10, 64)
+	reqTimeInt, err := strconv.ParseInt(res.Header.Get(requestTimeHeaderName), 10, 64)
 	if err != nil {
 		return sRes, err
 	}
 	sRes.responseTime = time.Unix(resTimeInt, 0)
 	sRes.requestTime = time.Unix(reqTimeInt, 0)
 	// delete extra headers
-	sRes.response.Header.Del("Response-Time")
-	sRes.response.Header.Del("Request-Time")
+	sRes.response.Header.Del(responseTimeHeaderName)
+	sRes.response.Header.Del(requestTimeHeaderName)
 	return sRes, nil
 }
 
 func storedResponseToBytes(sRes timedResponse) ([]byte, error) {
-	sRes.response.Header.Add("Response-Time", strconv.FormatInt(sRes.responseTime.Unix(), 10))
-	sRes.response.Header.Add("Request-Time", strconv.FormatInt(sRes.requestTime.Unix(), 10))
+	sRes.response.Header.Set(responseTimeHeaderName, strconv.FormatInt(sRes.responseTime.Unix(), 10))
+	sRes.response.Header.Set(requestTimeHeaderName, strconv.FormatInt(sRes.requestTime.Unix(), 10))
 	bts, err := responseToBytes(sRes.response)
 	// remove the extra headers just in case
-	sRes.response.Header.Del("Response-Time")
-	sRes.response.Header.Del("Request-Time")
+	sRes.response.Header.Del(responseTimeHeaderName)
+	sRes.response.Header.Del(requestTimeHeaderName)
 	return bts, err
 }
 
