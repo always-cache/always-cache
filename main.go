@@ -48,15 +48,12 @@ func main() {
 	if configFilenameFlag != "" {
 		config, err := getConfig(configFilenameFlag)
 		if err != nil {
-			panic(err)
+			log.Error().Err(err).Msg("Cannot get config")
+		} else if len(config.Origins) != 1 {
+			log.Error().Msg("Only exactly one origin supported")
+		} else {
+			acache.rules = config.Origins[0].Rules
 		}
-
-		if len(config.Origins) != 1 {
-			log.Fatal().Msg("Only exactly one origin supported")
-		}
-
-		// set paths
-		acache.rules = config.Origins[0].Rules
 	}
 
 	// use configured provider, panic if none specified

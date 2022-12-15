@@ -21,17 +21,21 @@ type Rule struct {
 
 func (r Rules) Apply(res *http.Response) {
 	if rule := r.find(res); rule != nil {
-		if rule.Override != "" {
-			log.Trace().Msg("Overriding Cache-Control header")
-			res.Header.Set("Cache-Control", rule.Override)
-		} else if rule.Default != "" && res.Header.Get("Cache-Control") == "" {
-			log.Trace().Msg("Applying default Cache-Control header")
-			res.Header.Set("Cache-Control", rule.Default)
-		}
-		for name, value := range rule.Headers {
-			log.Trace().Msgf("Setting header %s", name)
-			res.Header.Set(name, value)
-		}
+		applyRuleToResponse(*rule, res)
+	}
+}
+
+func applyRuleToResponse(rule Rule, res *http.Response) {
+	if rule.Override != "" {
+		log.Trace().Msg("Overriding Cache-Control header")
+		res.Header.Set("Cache-Control", rule.Override)
+	} else if rule.Default != "" && res.Header.Get("Cache-Control") == "" {
+		log.Trace().Msg("Applying default Cache-Control header")
+		res.Header.Set("Cache-Control", rule.Default)
+	}
+	for name, value := range rule.Headers {
+		log.Trace().Msgf("Setting header %s", name)
+		res.Header.Set(name, value)
 	}
 }
 
