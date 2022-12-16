@@ -4,7 +4,7 @@ export CGO_ENABLED=0
 dev:
 	gow -s -e go,mod,yml run . -provider memory -config config.yml -origin https://www.arktis3d.com -vv
 
-build:
+build: test
 	GOOS=linux GOARCH=amd64 go build -o acache
 
 testw:
