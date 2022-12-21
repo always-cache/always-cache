@@ -1,0 +1,21 @@
+{
+  "name": "cache-tests-runner",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "server": "cd node_modules/http-cache-tests; node server/server.mjs"
+  },
+  "config": {
+    "protocol": "http",
+    "port": "8000",
+    "base": "",
+    "id": "",
+    "pidfile": "server.pid"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "http-cache-tests": "^0.4.5"
+  }
+}
