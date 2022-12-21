@@ -78,14 +78,14 @@ export default {
           response_headers: [
             ["Cache-Control", "s-maxage=60", false],
           ],
-          pause_after: true
+          pause_after: true,
         },
         {
           filename: "root/",
           // request should come from cache and be server response nr 3
           expected_type: "cached",
           expected_response_headers: [["Server-Request-Count", "3"]],
-        }
+        },
       ],
     },
   ],

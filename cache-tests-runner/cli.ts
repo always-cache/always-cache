@@ -39,4 +39,7 @@ if (testId) {
 
 await runTests(testsToRun, fetch, false, baseUrl);
 
-await Deno.writeTextFile('results-temp.json', JSON.stringify(testResults, undefined, 2))
+await Deno.writeTextFile(
+  "results-temp.json",
+  JSON.stringify(testResults, undefined, 2),
+);
