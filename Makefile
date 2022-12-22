@@ -11,16 +11,16 @@ testh: http-cache http-server http-test
 
 http-test:
 	sleep 5
-	cd cache-tests-runner; ./http-test.sh $(id)
+	cd http-tests; ./http-test.sh $(id)
 
 http-server:
-	cd cache-tests-runner; npm run server
+	cd http-tests/cache-tests; npm run server
 
 http-cache:
 	gow run . -provider memory -legacy -origin http://localhost:8000 -vv
 
-release: repo-is-clean test build
-	cp cache-tests-runner/results-temp.json release/results.json
+release: git-is-clean test build
+	cp http-tests/results-temp.json release/results.json
 	git add .
 
 build: test
@@ -33,14 +33,14 @@ test-unit:
 
 test-http:
 	go run . -origin http://localhost:8000 -legacy -provider memory &
-	cd cache-tests-runner; npm run server &
+	cd http-tests/cache-tests; npm run server &
 	sleep 2
-	cd cache-tests-runner; deno run -A cli.ts results-temp.json
+	cd http-tests; deno run -A cli.ts results-temp.json
 	killall always-cache
 	killall node
-	cd cache-tests-runner; deno run -A results.ts results-temp.json ../release/results.json
+	cd http-tests; deno run -A results.ts results-temp.json ../release/results.json
 
-repo-is-clean:
-	git diff --exit-code
+git-is-clean:
+	git diff --exit-code --ignore-submodules
 
-.PHONY: dev build testw test test-unit test-http release repo-is-clean
+.PHONY: dev build testw test test-unit test-http release git-is-clean
