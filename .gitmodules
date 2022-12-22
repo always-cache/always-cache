@@ -1,3 +1,4 @@
 [submodule "http-tests/cache-tests"]
+	ignore = all
 	path = http-tests/cache-tests
 	url = https://github.com/http-tests/cache-tests.git
