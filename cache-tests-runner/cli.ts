@@ -10,7 +10,13 @@ import { testResults } from "../../cache-tests/client/test.mjs";
 // tests.push(surrogate);
 // tests.push(cacheFetch);
 
-const [testId] = Deno.args;
+const testId = false;
+const [resultsFile] = Deno.args;
+
+if (!resultsFile) {
+  console.log("USAGE: deno run -A cli.ts [results output file]");
+  Deno.exit(1);
+}
 
 const baseUrl = "http://localhost:8080";
 
@@ -40,6 +46,6 @@ if (testId) {
 await runTests(testsToRun, fetch, false, baseUrl);
 
 await Deno.writeTextFile(
-  "results-temp.json",
+  resultsFile,
   JSON.stringify(testResults, undefined, 2),
 );

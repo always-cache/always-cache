@@ -1,8 +1,17 @@
+const [testFile, baselineFile] = Deno.args;
+
+if (!testFile || !baselineFile) {
+  console.log(
+    "USAGE: deno run -A results.ts [test results] [baseline / release results]",
+  );
+  Deno.exit(1);
+}
+
 const baselineResults: Results = JSON.parse(
-  await Deno.readTextFile("results.json"),
+  await Deno.readTextFile(baselineFile),
 );
 const testResults: Results = JSON.parse(
-  await Deno.readTextFile("results-temp.json"),
+  await Deno.readTextFile(testFile),
 );
 // @deno-types="./types/tests.d.ts"
 import specs from "../../cache-tests/tests/index.mjs";

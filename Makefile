@@ -8,11 +8,11 @@ testw:
 	gow -s test ./...
 
 release: repo-is-clean test build
-	cd cache-tests-runner; mv results-temp.json results.json
+	mv cache-tests-runner/results-temp.json release/results.json
 	git add .
 
 build: test
-	GOOS=linux GOARCH=amd64 go build -o acache
+	GOOS=linux GOARCH=amd64 go build -o release/always-cache
 
 test: test-unit test-http
 
@@ -23,10 +23,10 @@ test-http:
 	go run . -origin http://localhost:8000 -legacy -provider memory &
 	cd cache-tests-runner; npm run server &
 	sleep 2
-	cd cache-tests-runner; deno run -A cli.ts
+	cd cache-tests-runner; deno run -A cli.ts results-temp.json
 	killall always-cache
 	killall node
-	cd cache-tests-runner; deno run -A results.ts
+	cd cache-tests-runner; deno run -A results.ts results-temp.json ../release/results.json
 
 repo-is-clean:
 	git diff --exit-code
