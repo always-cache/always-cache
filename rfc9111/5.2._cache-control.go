@@ -1,6 +1,7 @@
 package rfc9111
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -105,7 +106,7 @@ func getCacheControlDirectiveArgument(arg string) string {
 // §  stale after its age is greater than the specified number of seconds. This
 // §  directive uses the token form of the argument syntax: e.g., 'max-age=5' not
 // §  'max-age="5"'. A sender MUST NOT generate the quoted-string form.
-func (c CacheControl) MaxAge() (time.Duration, bool) {
+func (c CacheControl) MaxAge() (time.Duration, error) {
 	return c.getDeltaSeconds("max-age")
 }
 
@@ -294,7 +295,7 @@ func (c CacheControl) MaxAge() (time.Duration, bool) {
 // §     This directive uses the token form of the argument syntax: e.g.,
 // §     's-maxage=10' not 's-maxage="10"'.  A sender MUST NOT generate the
 // §     quoted-string form.
-func (c CacheControl) SMaxAge() (time.Duration, bool) {
+func (c CacheControl) SMaxAge() (time.Duration, error) {
 	return c.getDeltaSeconds("s-maxage")
 }
 
@@ -305,11 +306,11 @@ func (c CacheControl) SMaxAge() (time.Duration, bool) {
 // directive    -> 0,  false
 // directive=0  -> 0,  true
 // directive=60 -> 60, true
-func (c CacheControl) getDeltaSeconds(directive string) (time.Duration, bool) {
+func (c CacheControl) getDeltaSeconds(directive string) (time.Duration, error) {
 	if secondsStr, ok := c.Get(directive); ok && secondsStr != "" {
-		return deltaSeconds(secondsStr), true
+		return deltaSeconds(secondsStr)
 	}
-	return 0, false
+	return 0, fmt.Errorf("Directive %s does not exist", directive)
 }
 
 // §  5.2.3.  Extension Directives

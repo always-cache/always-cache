@@ -57,11 +57,12 @@ import (
 // §        |  representing that number.  What matters here is that an
 // §        |  overflow be detected and not treated as a negative value in
 // §        |  later calculations.
-func deltaSeconds(secondsStr string) time.Duration {
+func deltaSeconds(secondsStr string) (time.Duration, error) {
 	if seconds, err := strconv.ParseUint(secondsStr, 10, 64); err == nil {
-		return time.Second * time.Duration(seconds)
+		return time.Second * time.Duration(seconds), nil
+	} else {
+		return 0, err
 	}
-	return 0
 }
 
 func toDeltaSeconds(duration time.Duration) string {

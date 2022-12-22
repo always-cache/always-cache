@@ -24,13 +24,13 @@ func freshness_lifetime(res *http.Response) time.Duration {
 	// §
 	// §     *  If the cache is shared and the s-maxage response directive
 	// §        (Section 5.2.2.10) is present, use its value, or
-	if val, ok := resCacheControl.SMaxAge(); ok {
+	if val, err := resCacheControl.SMaxAge(); err == nil {
 		return val
 	}
 	// §
 	// §     *  If the max-age response directive (Section 5.2.2.1) is present,
 	// §        use its value, or
-	if val, ok := resCacheControl.MaxAge(); ok {
+	if val, err := resCacheControl.MaxAge(); err == nil {
 		return val
 	}
 	// §

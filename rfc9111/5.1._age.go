@@ -1,6 +1,7 @@
 package rfc9111
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,11 +31,12 @@ import (
 // §     generated or validated by the origin server for this request.
 // §     However, lack of an Age header field does not imply the origin was
 // §     contacted.
-func getAge(res *http.Response) (time.Duration, bool) {
+func getAge(res *http.Response) (time.Duration, error) {
 	headerFirst := res.Header.Get("Age")
 	listFirst := strings.Split(headerFirst, ", ")[0]
-	if listFirst != "" {
-		return deltaSeconds(listFirst), true
+	firstParam := strings.Split(listFirst, ";")[0]
+	if firstParam != "" {
+		return deltaSeconds(firstParam)
 	}
-	return 0, false
+	return 0, fmt.Errorf("Age header not found")
 }

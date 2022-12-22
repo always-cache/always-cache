@@ -22,7 +22,7 @@ import (
 // §        (Section 5.1), in a form appropriate for arithmetic operation; or
 // §        0, if not available.
 func age_value(res *http.Response) time.Duration {
-	if age, present := getAge(res); present {
+	if age, err := getAge(res); err == nil {
 		return age
 	}
 	return 0

@@ -10,13 +10,14 @@ testw:
 testh: http-cache http-server http-test
 
 http-test:
+	sleep 5
 	cd cache-tests-runner; ./http-test.sh $(id)
 
 http-server:
 	cd cache-tests-runner; npm run server
 
 http-cache:
-	gow -s run . -provider memory -legacy -origin http://localhost:8000 -vv
+	gow run . -provider memory -legacy -origin http://localhost:8000 -vv
 
 release: repo-is-clean test build
 	cp cache-tests-runner/results-temp.json release/results.json
