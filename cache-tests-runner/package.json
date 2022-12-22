@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "server": "cd node_modules/http-cache-tests; node server/server.mjs"
+    "server": "cd node_modules/http-cache-tests; node server/server.mjs",
+    "cli": "cd node_modules/http-cache-tests; node --no-warnings cli.mjs"
   },
   "config": {
     "protocol": "http",

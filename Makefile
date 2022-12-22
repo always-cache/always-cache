@@ -7,8 +7,19 @@ dev:
 testw:
 	gow -s test ./...
 
+testh: http-cache http-server http-test
+
+http-test:
+	cd cache-tests-runner; ./http-test.sh $(id)
+
+http-server:
+	cd cache-tests-runner; npm run server
+
+http-cache:
+	gow -s run . -provider memory -legacy -origin http://localhost:8000 -vv
+
 release: repo-is-clean test build
-	mv cache-tests-runner/results-temp.json release/results.json
+	cp cache-tests-runner/results-temp.json release/results.json
 	git add .
 
 build: test
