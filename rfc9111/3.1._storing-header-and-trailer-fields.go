@@ -20,7 +20,7 @@ func storableHeader(header http.Header) http.Header {
 	// §        it are required by Section 7.6.1 of [HTTP] to be removed before
 	// §        forwarding the message.  This MAY be implemented by doing so
 	// §        before storage.
-	for _, header := range getListHeader(header, "Connection") {
+	for _, header := range GetListHeader(header, "Connection") {
 		h.Del(header)
 	}
 	h.Del("Connection")
@@ -55,7 +55,7 @@ func storableTrailer(trailer http.Header) http.Header {
 }
 
 // TODO move to http rfc
-func getListHeader(header http.Header, field string) []string {
+func GetListHeader(header http.Header, field string) []string {
 	list := make([]string, 0)
 	for _, hdr := range header.Values(field) {
 		for _, item := range strings.Split(hdr, ",") {
@@ -69,7 +69,7 @@ func getListHeader(header http.Header, field string) []string {
 func GetForwardRequest(req *http.Request) *http.Request {
 	r := req.Clone(req.Context())
 
-	for _, header := range getListHeader(r.Header, "Connection") {
+	for _, header := range GetListHeader(r.Header, "Connection") {
 		r.Header.Del(header)
 	}
 	r.Header.Del("Connection")

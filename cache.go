@@ -94,9 +94,9 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Trace().Interface("headers", r.Header).Msgf("Incoming request: %s %s", r.Method, r.URL.Path)
 
-	key := getKey(r)
+	keyPrefix := getKeyPrefix(r)
 
-	log := log.With().Str("key", key).Logger()
+	log := log.With().Str("key", keyPrefix).Logger()
 	var cacheStatus CacheStatus
 
 	if testId := r.Header.Get("test-id"); testId != "" {
@@ -134,6 +134,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res.response = downstreamResponse
 
 	if mayStore {
+		key := addVaryKeys(keyPrefix, r, res.response)
 		a.save(key, res)
 	}
 
@@ -143,13 +144,22 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
-	key := getKey(r)
-	if cachedBytes, ok, _ := a.cache.Get(key); ok {
-		log.Trace().Str("key", key).Msg("Found cached response")
-		res, err := bytesToStoredResponse(cachedBytes)
-		return []timedResponse{res}, err
+	prefix := getKeyPrefix(r)
+	if entries, err := a.cache.All(prefix); err == nil && len(entries) > 0 {
+		log.Trace().Str("key", prefix).Msg("Found cached response(s)")
+		responses := make([]timedResponse, 0, len(entries))
+		for _, e := range entries {
+			if res, err := bytesToStoredResponse(e.Bytes); err == nil {
+				res.response.Request = &http.Request{
+					Header: getVaryHeaders(e.Key),
+				}
+				responses = append(responses, res)
+			}
+		}
+		return responses, nil
+	} else {
+		return []timedResponse{}, err
 	}
-	return []timedResponse{}, nil
 }
 
 func (a *AlwaysCache) updateIfNeeded(downReq *http.Request, upRes *http.Response) {
@@ -192,7 +202,7 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 		log.Trace().Str("update", update.Path).Msgf("Updating cache based on header")
 		updateCache := func() {
 			req, _ := http.NewRequest("GET", update.Path, nil)
-			_, err := a.saveRequest(req, getKey(req))
+			_, err := a.saveRequest(req, getKeyPrefix(req))
 			if err != nil {
 				panic(err)
 			}
@@ -212,9 +222,9 @@ func (a *AlwaysCache) revalidateUris(uris []string) {
 	for _, uri := range uris {
 		log.Trace().Str("uri", uri).Msgf("Revalidating possibly stored response")
 		req, _ := http.NewRequest("GET", uri, nil)
-		key := getKey(req)
+		key := getKeyPrefix(req)
 		if a.cache.Has(key) {
-			_, err := a.saveRequest(req, getKey(req))
+			_, err := a.saveRequest(req, getKeyPrefix(req))
 			if err != nil {
 				log.Error().Err(err).Str("key", key).Msg("Error revalidating stored request")
 			}
@@ -226,7 +236,7 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 	for _, uri := range uris {
 		log.Trace().Str("uri", uri).Msgf("Invalidating stored response")
 		req, _ := http.NewRequest("GET", uri, nil)
-		a.cache.Purge(getKey(req))
+		a.cache.Purge(getKeyPrefix(req))
 	}
 }
 
@@ -402,10 +412,10 @@ func getLogger(r *http.Request) *zerolog.Logger {
 	return logger
 }
 
-// getKey returns the cache key for a request.
+// getKeyPrefix returns the cache key for a request.
 // If it is a GET request, it will return the URL.
 // If it is a POST request, it will return the URL combined with a hash of the body.
-func getKey(r *http.Request) string {
+func getKeyPrefix(r *http.Request) string {
 	key := r.Method + ":" + r.URL.RequestURI()
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
@@ -415,6 +425,26 @@ func getKey(r *http.Request) string {
 		}
 	}
 	return key
+}
+
+func addVaryKeys(prefix string, req *http.Request, res *http.Response) string {
+	key := prefix
+	for _, name := range rfc9111.GetListHeader(res.Header, "Vary") {
+		if !rfc9111.FieldAbsent(req.Header, name) {
+			key = key + "\n" + strings.ToLower(name) + ": " + req.Header.Get(name)
+		}
+	}
+	return key
+}
+
+func getVaryHeaders(key string) http.Header {
+	header := make(http.Header)
+	lines := strings.Split(key, "\n")
+	for i := 1; i < len(lines); i++ {
+		entry := strings.SplitN(lines[i], ": ", 2)
+		header.Add(entry[0], entry[1])
+	}
+	return header
 }
 
 // multipartHash returns the hash of a multipart request body.

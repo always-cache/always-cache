@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 //
 // Implementations must be thread-safe!
 type CacheProvider interface {
+	// GetAll returns all cache entries that have the specific key prefix
+	All(prefix string) ([]CacheEntry, error)
 	// Get returns the cached response for the given key, if it exists.
 	// It also returns a boolean indicating whether retrieval was successful.
 	// If the cache entry has expired, the boolean should be false.
@@ -34,6 +37,12 @@ type CacheProvider interface {
 	Keys(cb func(string))
 }
 
+type CacheEntry struct {
+	Key     string
+	Expires time.Time
+	Bytes   []byte
+}
+
 type memCacheEntry struct {
 	expires time.Time
 	bytes   []byte
@@ -49,6 +58,22 @@ func NewMemCache() MemCache {
 		mutex: &sync.RWMutex{},
 		db:    make(map[string]memCacheEntry),
 	}
+}
+
+func (m MemCache) All(prefix string) ([]CacheEntry, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	entries := make([]CacheEntry, 0)
+	for key, val := range m.db {
+		if strings.HasPrefix(key, prefix) {
+			entries = append(entries, CacheEntry{
+				Key:     key,
+				Bytes:   val.bytes,
+				Expires: val.expires,
+			})
+		}
+	}
+	return entries, nil
 }
 
 func (m MemCache) Get(key string) ([]byte, bool, error) {
@@ -132,6 +157,26 @@ func NewSQLiteCache() SQLiteCache {
 	}
 }
 
+func (s SQLiteCache) All(prefix string) ([]CacheEntry, error) {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+	entries := make([]CacheEntry, 0)
+	rows, err := s.db.Query("SELECT key, expires, bytes FROM cache WHERE key LIKE ?", prefix+"%")
+	if err != nil {
+		return entries, err
+	}
+	for rows.Next() {
+		var entry CacheEntry
+		var exp int64
+		if err := rows.Scan(&entry.Key, &exp, &entry.Bytes); err != nil {
+			return entries, err
+		}
+		entry.Expires = time.Unix(exp, 0)
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 func (s SQLiteCache) Get(key string) ([]byte, bool, error) {
 	var expires int64
 	var bytes []byte
@@ -163,6 +208,8 @@ func (s SQLiteCache) Oldest() (string, time.Time, error) {
 }
 
 func (s SQLiteCache) Purge(key string) {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
 	_, err := s.db.Exec("DELETE FROM cache WHERE key = ?", key)
 	if err != nil {
 		panic(err)

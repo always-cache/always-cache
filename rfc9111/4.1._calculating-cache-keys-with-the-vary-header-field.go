@@ -2,9 +2,6 @@ package rfc9111
 
 import (
 	"net/http"
-	"strings"
-
-	"github.com/rs/zerolog/log"
 )
 
 // §  4.1.  Calculating Cache Keys with the Vary Header Field
@@ -16,20 +13,58 @@ import (
 // §     fields nominated by that Vary field value match those fields in the
 // §     original request (i.e., the request that caused the cached response
 // §     to be stored).
-func headerFieldsMatch(req *http.Request, res *http.Response) bool {
-	// TODO
+func headerFieldsMatch(req *http.Request, originalReq *http.Request, storedRes *http.Response) bool {
+	for _, item := range GetListHeader(storedRes.Header, "Vary") {
+		// §
+		// §     The header fields from two requests are defined to match if and only
+		// §     if those in the first request can be transformed to those in the
+		// §     second request by applying any of the following:
+		// §
+		// §     *  adding or removing whitespace, where allowed in the header field's
+		// §        syntax
+		// §
+		// §     *  combining multiple header field lines with the same field name
+		// §        (see Section 5.2 of [HTTP])
+		// §
+		// §     *  normalizing both header field values in a way that is known to
+		// §        have identical semantics, according to the header field's
+		// §        specification (e.g., reordering field values when order is not
+		// §        significant; case-normalization, where values are defined to be
+		// §        case-insensitive)
+		if req.Header.Get(item) != originalReq.Header.Get(item) {
+			return false
+		}
+		// §
+		// §     If (after any normalization that might take place) a header field is
+		// §     absent from a request, it can only match another request if it is
+		// §     also absent there.
+		if FieldAbsent(req.Header, item) || FieldAbsent(originalReq.Header, item) {
+			if !(FieldAbsent(req.Header, item) && FieldAbsent(originalReq.Header, item)) {
+				return false
+			}
+		}
+		// §
+		// §     A stored response with a Vary header field value containing a member
+		// §     "*" always fails to match.
+		if item == "*" {
+			return false
+		}
+	}
+	return true
+
+	/* TODO re-enable content negotiation
 	ceMatch := true
-	for _, item := range res.Header.Values("Vary") {
+	for _, item := range storedRes.Header.Values("Vary") {
 		log.Trace().Msgf("Checking Vary header %s", item)
 		// if vary is only for content-encoding, and the stored header matches
 		// that of the request, we are good to go
 		if strings.ToLower(item) == "accept-encoding" {
 			ceMatch = false
-			if ce := res.Header.Get("Content-Encoding"); ce == "" || ce == "identity" {
+			if ce := storedRes.Header.Get("Content-Encoding"); ce == "" || ce == "identity" {
 				ceMatch = true
 			}
 			for _, accepted := range strings.Split(req.Header.Get("Accept-Encoding"), ", ") {
-				if accepted == res.Header.Get("Content-Encoding") {
+				if accepted == storedRes.Header.Get("Content-Encoding") {
 					ceMatch = true
 				}
 			}
@@ -38,30 +73,9 @@ func headerFieldsMatch(req *http.Request, res *http.Response) bool {
 		}
 	}
 	return ceMatch
+	*/
 }
 
-// §     The header fields from two requests are defined to match if and only
-// §     if those in the first request can be transformed to those in the
-// §     second request by applying any of the following:
-// §
-// §     *  adding or removing whitespace, where allowed in the header field's
-// §        syntax
-// §
-// §     *  combining multiple header field lines with the same field name
-// §        (see Section 5.2 of [HTTP])
-// §
-// §     *  normalizing both header field values in a way that is known to
-// §        have identical semantics, according to the header field's
-// §        specification (e.g., reordering field values when order is not
-// §        significant; case-normalization, where values are defined to be
-// §        case-insensitive)
-// §
-// §     If (after any normalization that might take place) a header field is
-// §     absent from a request, it can only match another request if it is
-// §     also absent there.
-// §
-// §     A stored response with a Vary header field value containing a member
-// §     "*" always fails to match.
 // §
 // §     If multiple stored responses match, the cache will need to choose one
 // §     to use.  When a nominated request header field has a known mechanism
@@ -84,3 +98,7 @@ func headerFieldsMatch(req *http.Request, res *http.Response) bool {
 // §     request.  Typically, the request is forwarded to the origin server,
 // §     potentially with preconditions added to describe what responses the
 // §     cache has already stored (Section 4.3).
+
+func FieldAbsent(fields http.Header, name string) bool {
+	return len(fields.Values(name)) == 0
+}

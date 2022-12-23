@@ -31,7 +31,7 @@ func mustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, 
 		// §
 		// §     *  request header fields nominated by the stored response (if any)
 		// §        match those presented (see Section 4.1), and
-		headerFieldsMatch(req, res) &&
+		headerFieldsMatch(req, res.Request, res) &&
 		// §
 		// §     *  the stored response does not contain the no-cache directive
 		// §        (Section 5.2.2.4), unless it is successfully validated
