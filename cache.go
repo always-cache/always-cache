@@ -201,10 +201,15 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 	for _, update := range updates {
 		log.Trace().Str("update", update.Path).Msgf("Updating cache based on header")
 		updateCache := func() {
-			req, _ := http.NewRequest("GET", update.Path, nil)
-			_, err := a.saveRequest(req, getKeyPrefix(req))
+			req, err := http.NewRequest("GET", update.Path, nil)
 			if err != nil {
-				panic(err)
+				log.Error().Err(err).Str("path", update.Path).Msg("Could not create request for updates")
+				return
+			}
+			_, err = a.saveRequest(req, getKeyPrefix(req))
+			if err != nil {
+				log.Error().Err(err).Str("path", update.Path).Msg("Could not save updates")
+				return
 			}
 		}
 		if update.Delay > 0 {
@@ -221,10 +226,14 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 func (a *AlwaysCache) revalidateUris(uris []string) {
 	for _, uri := range uris {
 		log.Trace().Str("uri", uri).Msgf("Revalidating possibly stored response")
-		req, _ := http.NewRequest("GET", uri, nil)
+		req, err := http.NewRequest("GET", uri, nil)
+		if err != nil {
+			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for revalidation")
+			continue
+		}
 		key := getKeyPrefix(req)
 		if a.cache.Has(key) {
-			_, err := a.saveRequest(req, getKeyPrefix(req))
+			_, err := a.saveRequest(req, key)
 			if err != nil {
 				log.Error().Err(err).Str("key", key).Msg("Error revalidating stored request")
 			}
@@ -235,7 +244,11 @@ func (a *AlwaysCache) revalidateUris(uris []string) {
 func (a *AlwaysCache) invalidateUris(uris []string) {
 	for _, uri := range uris {
 		log.Trace().Str("uri", uri).Msgf("Invalidating stored response")
-		req, _ := http.NewRequest("GET", uri, nil)
+		req, err := http.NewRequest("GET", uri, nil)
+		if err != nil {
+			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for invalidation")
+			continue
+		}
 		a.cache.Purge(getKeyPrefix(req))
 	}
 }
@@ -257,18 +270,20 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 
 // fetch the resource specified in the incoming request from the origin
 func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
-	req, err := http.NewRequest(r.Method, a.originURL.String()+r.URL.RequestURI(), r.Body)
+	timedRes := timedResponse{requestTime: time.Now()}
+	uri := a.originURL.String() + r.URL.RequestURI()
+	req, err := http.NewRequest(r.Method, uri, r.Body)
+	if err != nil {
+		log.Error().Err(err).Str("uri", uri).Msg("Could not create request for fetching")
+		return timedRes, err
+	}
 	req.Host = a.originHost
 	copyHeader(req.Header, r.Header)
 	// do not forward connection header, this causes trouble
 	// bug surfaced it cache-tests headers-store-Connection test
 	req.Header.Del("Connection")
-	if err != nil {
-		panic(err)
-	}
 	log.Trace().Msgf("Executing request %+v", *req)
 
-	timedRes := timedResponse{requestTime: time.Now()}
 	originResponse, err := a.client.Do(req)
 	timedRes.responseTime = time.Now()
 	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
@@ -349,19 +364,28 @@ func (a *AlwaysCache) updateCache() {
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
-			req, _ := http.NewRequest("GET", key, nil)
-			log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
-			cached, err := a.saveRequest(req, key)
-			// if there was an error, sleep and retry
-			if !cached || err != nil {
-				time.Sleep(time.Second)
-				cached, err = a.saveRequest(req, key)
-			}
-			if !cached {
-				a.cache.Purge(key)
+			req, err := getRequestFromKey(key)
+			if err == nil {
+				log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
+				cached, err := a.saveRequest(req, key)
+				// if there was an error, sleep and retry
+				if !cached || err != nil {
+					time.Sleep(time.Second)
+					cached, err = a.saveRequest(req, key)
+				}
+				if !cached {
+					a.cache.Purge(key)
+				}
+				if err != nil {
+					log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
+				}
+			} else if err == errorMethodNotSupported {
+				log.Trace().Err(err).Str("key", key).Msg("Method not supported")
+			} else {
+				log.Error().Err(err).Str("key", key).Msg("Could not create request from key")
 			}
 			if err != nil {
-				log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
+				a.cache.Purge(key)
 			}
 		} else {
 			log.Trace().Msg("No entries expiring, pausing update")
@@ -375,13 +399,14 @@ func (a *AlwaysCache) updateAll() {
 		log.Debug().Msgf("Updating key %s", key)
 		req, err := http.NewRequest("GET", key, nil)
 		if err != nil {
-			log.Warn().Err(err).Msg("Could not create request")
+			log.Warn().Err(err).Str("key", key).Msg("Could not create request for updating all")
+			return
 		}
 		cached, err := a.saveRequest(req, key)
 		if err != nil {
-			log.Warn().Err(err).Msg("Could not create request")
+			log.Warn().Err(err).Str("key", key).Msg("Could not save request")
 		} else if !cached {
-			log.Debug().Msg("Update not cached")
+			log.Debug().Str("key", key).Msg("Update not cached")
 		}
 	})
 }
@@ -435,6 +460,15 @@ func addVaryKeys(prefix string, req *http.Request, res *http.Response) string {
 		}
 	}
 	return key
+}
+
+var errorMethodNotSupported = fmt.Errorf("Method not supported")
+
+func getRequestFromKey(key string) (*http.Request, error) {
+	if !strings.HasPrefix(key, "GET:") {
+		return nil, errorMethodNotSupported
+	}
+	return http.NewRequest("GET", key, nil)
 }
 
 func getVaryHeaders(key string) http.Header {
