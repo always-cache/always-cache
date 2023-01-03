@@ -98,13 +98,20 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log := log.With().Str("key", keyPrefix).Logger()
 	var cacheStatus CacheStatus
+	var responseIfValidated *http.Response
 
 	if responses, err := a.getResponses(r); err == nil {
 		for _, sRes := range responses {
-			if res := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime); res != nil {
-				cacheStatus.Hit()
-				send(w, res, cacheStatus)
-				return
+			if res, validationReq := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime); res != nil {
+				if validationReq == nil {
+					cacheStatus.Hit()
+					send(w, res, cacheStatus)
+					return
+				} else {
+					log.Trace().Msgf("Response is ok as long as it is validated with %+v", validationReq)
+					responseIfValidated = res
+					r = validationReq
+				}
 			}
 		}
 	} else {
@@ -123,6 +130,11 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Trace().Msg("Got response from origin")
+
+	if responseIfValidated != nil && res.response.StatusCode == http.StatusNotModified {
+		send(w, responseIfValidated, cacheStatus)
+		return
+	}
 
 	a.rules.Apply(res.response)
 
@@ -304,9 +316,7 @@ func copyHeader(dst, src http.Header) {
 	for k, vv := range src {
 		// this is a warkaround to remove default headers sent by an upstream proxy
 		// some servers do not like the presence of these headers in the downstream request
-		// also remove conditional request headers, since they are not supported
-		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" &&
-			k != "If-None-Match" && k != "If-Modified-Since" {
+		if k != "X-Forwarded-For" && k != "X-Forwarded-Proto" && k != "X-Forwarded-Host" {
 			for _, v := range vv {
 				dst.Add(k, v)
 			}
