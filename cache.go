@@ -266,13 +266,12 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 		panic(err)
 	}
 	exp := rfc9111.GetExpiration(sRes.response)
-	if !exp.IsZero() {
-		if err := a.cache.Put(key, exp, responseBytes); err != nil {
-			log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
-			panic(err)
-		}
-		log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
+
+	if err := a.cache.Put(key, exp, responseBytes); err != nil {
+		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
+		panic(err)
 	}
+	log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
 }
 
 // fetch the resource specified in the incoming request from the origin
