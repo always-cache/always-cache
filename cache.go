@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ericselin/always-cache/rfc9111"
+	"github.com/ericselin/always-cache/rfc9211"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
@@ -97,28 +98,29 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	keyPrefix := getKeyPrefix(r)
 
 	log := log.With().Str("key", keyPrefix).Logger()
-	var cacheStatus CacheStatus
+	var cacheStatus rfc9211.CacheStatus
 	var responseIfValidated *http.Response
 
-	if responses, err := a.getResponses(r); err == nil {
+	if responses, err := a.getResponses(r); err != nil {
+		log.Warn().Err(err).Msg("Error getting responses")
+	} else if len(responses) > 0 {
 		for _, sRes := range responses {
-			if res, validationReq := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime); res != nil {
-				if validationReq == nil {
-					cacheStatus.Hit()
-					send(w, res, cacheStatus)
-					return
-				} else {
-					log.Trace().Msgf("Response is ok as long as it is validated with %+v", validationReq)
-					responseIfValidated = res
-					r = validationReq
-				}
+			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime)
+			if fwdReason == "" {
+				cacheStatus.Hit()
+				send(w, res, cacheStatus)
+				return
+			}
+			cacheStatus.Forward(fwdReason)
+			if validationReq != nil {
+				log.Trace().Msgf("Response is ok as long as it is validated with %+v", validationReq)
+				responseIfValidated = res
+				r = validationReq
 			}
 		}
 	} else {
-		log.Warn().Err(err).Msg("Error getting responses")
+		cacheStatus.Forward(rfc9211.FwdReasonUriMiss)
 	}
-
-	cacheStatus.Forward(CacheStatusFwdMiss)
 
 	upstreamRequest := rfc9111.GetForwardRequest(r)
 
@@ -299,7 +301,7 @@ func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	return timedRes, err
 }
 
-func send(w http.ResponseWriter, r *http.Response, status CacheStatus) error {
+func send(w http.ResponseWriter, r *http.Response, status rfc9211.CacheStatus) error {
 	log.Trace().Msg("Sending response")
 	if r.Body != nil {
 		defer r.Body.Close()
