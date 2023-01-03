@@ -20,14 +20,15 @@ func mustNotReuse(req *http.Request, res *http.Response, requestTime time.Time, 
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §     When presented with a request, a cache MUST NOT reuse a stored
 	// §     response unless:
-	// §
-	// §     *  the presented target URI (Section 7.1 of [HTTP]) and that of the
-	// §        stored response match, and
-	// §
-	// §     *  the request method associated with the stored response allows it
-	// §        to be used for the presented request, and
-	// TODO implement in some meaningful way - although we know it matches because of the key
 	mayReuse := true &&
+		// §
+		// §     *  the presented target URI (Section 7.1 of [HTTP]) and that of the
+		// §        stored response match, and
+		req.URL.String() == res.Request.URL.String() &&
+		// §
+		// §     *  the request method associated with the stored response allows it
+		// §        to be used for the presented request, and
+		// TODO implement in some meaningful way - although we know it matches because of the key
 		// §
 		// §     *  request header fields nominated by the stored response (if any)
 		// §        match those presented (see Section 4.1), and

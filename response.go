@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -46,19 +48,45 @@ func bytesToStoredResponse(b []byte) (timedResponse, error) {
 	return sRes, nil
 }
 
+var delim = []byte("\r\n\r\n----\r\n\r\n")
+
 func storedResponseToBytes(sRes timedResponse) ([]byte, error) {
-	sRes.response.Header.Set(responseTimeHeaderName, strconv.FormatInt(sRes.responseTime.Unix(), 10))
-	sRes.response.Header.Set(requestTimeHeaderName, strconv.FormatInt(sRes.requestTime.Unix(), 10))
+	res := sRes.response
+	req := sRes.response.Request
+	buf := &bytes.Buffer{}
+
+	if req != nil {
+		err := req.Write(buf)
+		if err != nil {
+			log.Warn().Err(err).Msg("Could not write request to bytes")
+		}
+	} else {
+		log.Warn().Msg("Request not set")
+	}
+	buf.Write(delim)
+
+	res.Header.Set(responseTimeHeaderName, strconv.FormatInt(sRes.responseTime.Unix(), 10))
+	res.Header.Set(requestTimeHeaderName, strconv.FormatInt(sRes.requestTime.Unix(), 10))
 	bts, err := responseToBytes(sRes.response)
 	// remove the extra headers just in case
-	sRes.response.Header.Del(responseTimeHeaderName)
-	sRes.response.Header.Del(requestTimeHeaderName)
-	return bts, err
+	res.Header.Del(responseTimeHeaderName)
+	res.Header.Del(requestTimeHeaderName)
+
+	buf.Write(bts)
+
+	return buf.Bytes(), err
 }
 
 // bytesToResponse converts a byte slice to a http.Response.
 func bytesToResponse(b []byte) (*http.Response, error) {
-	return http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
+	bParts := bytes.Split(b, delim)
+	reqBytes := bParts[0]
+	resBytes := bParts[1]
+	req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(reqBytes)))
+	if err != nil {
+		log.Warn().Err(err).Bytes("bytes", reqBytes).Msg("Could not read request from stored response")
+	}
+	return http.ReadResponse(bufio.NewReader(bytes.NewReader(resBytes)), req)
 }
 
 // responseToBytes converts a response to a byte slice.

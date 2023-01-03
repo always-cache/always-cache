@@ -99,10 +99,6 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log := log.With().Str("key", keyPrefix).Logger()
 	var cacheStatus CacheStatus
 
-	if testId := r.Header.Get("test-id"); testId != "" {
-		log.Debug().Str("testId", testId).Msg("Request for test")
-	}
-
 	if responses, err := a.getResponses(r); err == nil {
 		for _, sRes := range responses {
 			if res := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime); res != nil {
@@ -150,9 +146,6 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 		responses := make([]timedResponse, 0, len(entries))
 		for _, e := range entries {
 			if res, err := bytesToStoredResponse(e.Bytes); err == nil {
-				res.response.Request = &http.Request{
-					Header: getVaryHeaders(e.Key),
-				}
 				responses = append(responses, res)
 			}
 		}
