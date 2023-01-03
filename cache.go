@@ -441,12 +441,12 @@ func getLogger(r *http.Request) *zerolog.Logger {
 // If it is a GET request, it will return the URL.
 // If it is a POST request, it will return the URL combined with a hash of the body.
 func getKeyPrefix(r *http.Request) string {
-	key := r.Method + ":" + r.URL.RequestURI()
+	key := r.Method + ":" + r.URL.RequestURI() + "\t"
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
-			return key + ":" + multipartHash
+			return key + multipartHash
 		} else if bodyHash := bodyHash(r); bodyHash != "" {
-			return key + ":" + bodyHash
+			return key + bodyHash
 		}
 	}
 	return key
@@ -468,7 +468,8 @@ func getRequestFromKey(key string) (*http.Request, error) {
 	if !strings.HasPrefix(key, "GET:") {
 		return nil, errorMethodNotSupported
 	}
-	return http.NewRequest("GET", key, nil)
+	uri := strings.TrimSpace(strings.TrimLeft(key, "GET:"))
+	return http.NewRequest("GET", uri, nil)
 }
 
 func getVaryHeaders(key string) http.Header {
