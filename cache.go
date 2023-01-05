@@ -401,7 +401,7 @@ func (a *AlwaysCache) updateCache() {
 func (a *AlwaysCache) updateAll() {
 	a.cache.Keys(func(key string) {
 		log.Debug().Msgf("Updating key %s", key)
-		req, err := http.NewRequest("GET", key, nil)
+		req, err := getRequestFromKey(key)
 		if err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("Could not create request for updating all")
 			return
