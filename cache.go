@@ -472,7 +472,8 @@ func getRequestFromKey(key string) (*http.Request, error) {
 	if !strings.HasPrefix(key, "GET:") {
 		return nil, errorMethodNotSupported
 	}
-	uri := strings.TrimSpace(strings.TrimLeft(key, "GET:"))
+	keyNoVary := strings.Split(key, "\t")[0]
+	uri := strings.TrimSpace(strings.TrimLeft(keyNoVary, "GET:"))
 	return http.NewRequest("GET", uri, nil)
 }
 
