@@ -20,6 +20,11 @@ type Rule struct {
 }
 
 func (r Rules) Apply(res *http.Response) {
+	// only apply rules for successes
+	if res.StatusCode != http.StatusOK {
+		return
+	}
+	// if rule found, apply to response
 	if rule := r.find(res); rule != nil {
 		applyRuleToResponse(*rule, res)
 	}
