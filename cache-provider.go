@@ -27,6 +27,7 @@ type CacheProvider interface {
 	Put(key string, expires time.Time, bytes []byte) error
 	// Oldest returns the key and expiration time of the oldest entry in the cache.
 	// The oldest entry is the one with the earliest expiration time.
+	// It should not return items where the expiry is zero
 	Oldest() (string, time.Time, error)
 	// Purge removes the cache entry for the given key.
 	// It is a utility method that is not used by the cache middleware.
@@ -102,7 +103,7 @@ func (m MemCache) Oldest() (string, time.Time, error) {
 	var oldestKey string
 	var oldestTime time.Time
 	for key, entry := range m.db {
-		if oldestKey == "" || entry.expires.Before(oldestTime) {
+		if !entry.expires.IsZero() && (oldestKey == "" || entry.expires.Before(oldestTime)) {
 			oldestKey = key
 			oldestTime = entry.expires
 		}
@@ -200,7 +201,7 @@ func (s SQLiteCache) Put(key string, expires time.Time, bytes []byte) error {
 func (s SQLiteCache) Oldest() (string, time.Time, error) {
 	var key string
 	var expires int64
-	err := s.db.QueryRow("SELECT key, expires FROM cache ORDER BY expires ASC LIMIT 1").Scan(&key, &expires)
+	err := s.db.QueryRow("SELECT key, expires FROM cache WHERE expires > 0 ORDER BY expires ASC LIMIT 1").Scan(&key, &expires)
 	if err != nil {
 		return "", time.Time{}, err
 	}
