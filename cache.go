@@ -106,8 +106,10 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if len(responses) > 0 {
 		for _, sRes := range responses {
 			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime)
+			res.Request = r
 			if fwdReason == "" {
 				cacheStatus.Hit()
+				cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.response, sRes.responseTime, sRes.requestTime)
 				send(w, res, cacheStatus)
 				return
 			}
@@ -146,6 +148,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if mayStore {
 		key := addVaryKeys(keyPrefix, r, res.response)
 		a.save(key, res)
+		cacheStatus.Stored = true
 	}
 
 	send(w, downstreamResponse, cacheStatus)
@@ -301,7 +304,19 @@ func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 }
 
 func send(w http.ResponseWriter, r *http.Response, status rfc9211.CacheStatus) error {
-	log.Trace().Msg("Sending response")
+	evt := log.Debug()
+	if r.Request == nil {
+		log.Warn().Msg("Could not get request for response to client")
+	} else {
+		evt = evt.Str("url", r.Request.URL.String())
+	}
+	evt.
+		Str("status", string(status.Status)).
+		Str("fwd", string(status.FwdReason)).
+		Bool("stored", status.Stored).
+		Int("ttl", status.TimeToLive).
+		Msg("Sending response to client")
+
 	if r.Body != nil {
 		defer r.Body.Close()
 	}
@@ -416,6 +431,11 @@ func (a *AlwaysCache) updateAll() {
 }
 
 func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
+	log.Debug().
+		Str("key", key).
+		Str("url", req.URL.String()).
+		Msg("Requesting content from origin")
+
 	res, err := a.fetch(req)
 	if err != nil {
 		return false, err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"io"
 	"net/url"
 	"os"
 	"time"
@@ -19,6 +20,7 @@ var (
 	providerFlag       string
 	legacyModeFlag     bool
 	verbosityTraceFlag bool
+	logFilenameFlag    string
 )
 
 func init() {
@@ -30,6 +32,7 @@ func init() {
 	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
+	flag.StringVar(&logFilenameFlag, "log-file", "", "Log file to use (in addition to stdout)")
 }
 
 func main() {
@@ -39,7 +42,17 @@ func main() {
 	if verbosityTraceFlag {
 		logLevel = zerolog.TraceLevel
 	}
-	log.Logger = log.Level(logLevel).Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	logOutputs := make([]io.Writer, 0)
+	logOutputs = append(logOutputs, zerolog.ConsoleWriter{Out: os.Stdout})
+	if logFilenameFlag != "" {
+		if logFileOutput, err := os.OpenFile(logFilenameFlag, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644); err != nil {
+			log.Fatal().Err(err).Msg("Cannot open log file")
+		} else {
+			logOutputs = append(logOutputs, logFileOutput)
+		}
+	}
+	multiWriter := zerolog.MultiLevelWriter(logOutputs...)
+	log.Logger = log.Level(logLevel).Output(multiWriter)
 
 	acache := AlwaysCache{
 		invalidateOnly: legacyModeFlag,

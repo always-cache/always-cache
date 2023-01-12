@@ -1,13 +1,3 @@
 origins:
   -  rules:
-      - query:
-          preview_id:
-        override: s-maxage=20
-      - path: /wp-login.php
-      - path: /api/compute/compute
-        method: POST
-        default: s-maxage=30
-      - default: s-maxage=600
-        override: s-maxage=3600
-        headers:
-          Vary: Accept-Encoding
+      - default: s-maxage=60

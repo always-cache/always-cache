@@ -49,31 +49,35 @@ const (
 )
 
 type CacheStatus struct {
-	status    Status
-	detail    string
-	fwdReason FwdReason
+	Status     Status
+	Detail     string
+	FwdReason  FwdReason
+	Stored     bool
+	TimeToLive int
 }
 
 func (cs *CacheStatus) Hit() {
-	cs.status = StatusHit
+	cs.Status = StatusHit
 }
 
 func (cs *CacheStatus) Forward(reason FwdReason) {
-	cs.status = StatusFwd
-	cs.fwdReason = reason
-}
-
-func (cs *CacheStatus) Detail(detail string) {
-	cs.detail = detail
+	cs.Status = StatusFwd
+	cs.FwdReason = reason
 }
 
 func (cs *CacheStatus) String() string {
-	status := fmt.Sprintf("Always-Cache; %s", cs.status)
-	if cs.status == "fwd" && cs.fwdReason != "" {
-		status = fmt.Sprintf("%s=%s", status, cs.fwdReason)
+	status := fmt.Sprintf("Always-Cache; %s", cs.Status)
+	if cs.Status == "fwd" && cs.FwdReason != "" {
+		status = fmt.Sprintf("%s=%s", status, cs.FwdReason)
 	}
-	if cs.detail != "" {
-		status = status + "; detail=" + cs.detail
+	if cs.Detail != "" {
+		status = status + "; detail=" + cs.Detail
+	}
+	if cs.Stored {
+		status += "; stored"
+	}
+	if cs.TimeToLive != 0 {
+		status += fmt.Sprintf("; ttl=%d", cs.TimeToLive)
 	}
 	return status
 }

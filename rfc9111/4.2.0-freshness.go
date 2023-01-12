@@ -1,6 +1,7 @@
 package rfc9111
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -54,6 +55,16 @@ import (
 func isFresh(res *http.Response, responseTime, requestTime time.Time) bool {
 	log.Trace().Msgf("freshness_lifetime: %+v, current_age: %+v", freshness_lifetime(res), current_age(res, responseTime, requestTime))
 	return freshness_lifetime(res) > current_age(res, responseTime, requestTime)
+}
+
+// TimeToLive returns the response's remoining lifetime, i.e. TTL.
+// It DOES NOT take into account any headers that prohibit caching.
+// Thus, it is only truly accurate for cached responses.
+// It is a helper function that can be used e.g. for logging.
+func TimeToLive(res *http.Response, responseTime, requestTime time.Time) int {
+	lifetime := freshness_lifetime(res)
+	age := current_age(res, responseTime, requestTime)
+	return int(math.Round(lifetime.Seconds() - age.Seconds()))
 }
 
 // §     Clients can send the max-age or min-fresh request directives
