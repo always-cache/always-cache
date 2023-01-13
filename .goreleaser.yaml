@@ -12,7 +12,8 @@ builds:
     goos:
       - linux
       - darwin
-
+release:
+  prerelease: auto
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.
