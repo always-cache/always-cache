@@ -3,7 +3,7 @@ export CGO_ENABLED=0
 provider ?= memory
 
 dev:
-	gow -s -e go,mod,yml run . -provider memory -config config.yml -origin https://acache.statichost.eu -vv
+	gow -s -e go,mod,yml run . -provider memory -origin https://acache.statichost.eu -vv
 
 testw:
 	gow -s test ./...

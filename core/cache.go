@@ -13,6 +13,7 @@ import (
 	"github.com/always-cache/always-cache/rfc9111"
 	"github.com/always-cache/always-cache/rfc9211"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -69,8 +70,40 @@ func CreateCache(config Config) *AlwaysCache {
 }
 
 // ServeHTTP implements the http.Handler interface.
-// It is the main entry point for the caching middleware.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer a.recover(w, r)
+	a.handle(w, r)
+}
+
+// recover recovers from panics and sends the response to the escape hatch if needed.
+func (a *AlwaysCache) recover(w http.ResponseWriter, r *http.Request) {
+	if err := recover(); err != nil {
+		a.escapeHatch(w, r)
+		log.WithLevel(zerolog.PanicLevel).Interface("error", err).Msg("Panic in cache handler")
+	}
+}
+
+// escapeHatch is a fallback handler that just proxies the request to the origin.
+func (a *AlwaysCache) escapeHatch(w http.ResponseWriter, r *http.Request) {
+	originReq := rfc9111.GetForwardRequest(r)
+	// TODO use just httpClient.Do here (by creating the request first)
+	originRes, err := a.fetch(originReq)
+	if err != nil {
+		log.Error().Err(err).Msg("Error connecting to origin")
+		http.Error(w, "Could not connect to origin", http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(originRes.response.StatusCode)
+	copyHeader(w.Header(), originRes.response.Header)
+	defer originRes.response.Body.Close()
+	_, err = io.Copy(w, originRes.response.Body)
+	if err != nil {
+		log.Error().Err(err).Msg("Error writing to client")
+	}
+}
+
+// hondle is the main entry point for the caching middleware.
+func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	// this is a temporary workaround
 	if r.URL.Path == "/.acache-update" {
 		go a.updateAll()
