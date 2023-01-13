@@ -74,7 +74,7 @@ func (a *AlwaysCache) Run() error {
 	// initialize
 	a.init()
 	// start the server
-	log.Info().Msgf("Proxying port %v to %s with hostname %s", a.port, a.originURL, a.originHost)
+	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", a.port, a.originURL, a.originHost)
 	return http.ListenAndServe(fmt.Sprintf(":%d", a.port), a)
 }
 
@@ -310,11 +310,16 @@ func send(w http.ResponseWriter, r *http.Response, status rfc9211.CacheStatus) e
 	} else {
 		evt = evt.Str("url", r.Request.URL.String())
 	}
+	isHit := 0
+	if status.FwdReason == "" {
+		isHit = 1
+	}
 	evt.
 		Str("status", string(status.Status)).
 		Str("fwd", string(status.FwdReason)).
 		Bool("stored", status.Stored).
 		Int("ttl", status.TimeToLive).
+		Int("hit", isHit).
 		Msg("Sending response to client")
 
 	if r.Body != nil {

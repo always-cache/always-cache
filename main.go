@@ -21,6 +21,9 @@ var (
 	legacyModeFlag     bool
 	verbosityTraceFlag bool
 	logFilenameFlag    string
+
+	// this is set by goreleaser
+	version string
 )
 
 func init() {
@@ -33,6 +36,10 @@ func init() {
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 	flag.StringVar(&logFilenameFlag, "log-file", "", "Log file to use (in addition to stdout)")
+
+	if version == "" {
+		version = "DEV"
+	}
 }
 
 func main() {
@@ -52,7 +59,8 @@ func main() {
 		}
 	}
 	multiWriter := zerolog.MultiLevelWriter(logOutputs...)
-	log.Logger = log.Level(logLevel).Output(multiWriter)
+	log.Logger = log.Level(logLevel).Output(multiWriter).
+		With().Str("version", version).Logger()
 
 	acache := AlwaysCache{
 		invalidateOnly: legacyModeFlag,
