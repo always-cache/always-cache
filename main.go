@@ -2,19 +2,23 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"time"
 
 	"github.com/always-cache/always-cache/core"
+	"gopkg.in/yaml.v3"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
 var (
-	configFilenameFlag string
+	// CLI flags
+	rulesFilenameFlag  string
 	portFlag           int
 	originFlag         string
 	addrFlag           string
@@ -29,10 +33,10 @@ var (
 )
 
 func init() {
-	flag.StringVar(&configFilenameFlag, "config", "", "Path to config file")
 	flag.StringVar(&originFlag, "origin", "", "Origin URL to proxy to (overrides addr and host)")
 	flag.StringVar(&addrFlag, "addr", "", "Origin IP address to proxy to")
 	flag.StringVar(&hostFlag, "host", "", "Hostname of origin")
+	flag.StringVar(&rulesFilenameFlag, "rules", "", "Path to rules file (overrides default)")
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
 	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
@@ -47,10 +51,14 @@ func init() {
 func main() {
 	flag.Parse()
 
+	// set log level
 	logLevel := zerolog.DebugLevel
 	if verbosityTraceFlag {
 		logLevel = zerolog.TraceLevel
 	}
+
+	// set up log output to stdout
+	// also output to logfile if specified
 	logOutputs := make([]io.Writer, 0)
 	logOutputs = append(logOutputs, zerolog.ConsoleWriter{Out: os.Stdout})
 	if logFilenameFlag != "" {
@@ -64,34 +72,36 @@ func main() {
 	log.Logger = log.Level(logLevel).Output(multiWriter).
 		With().Str("version", version).Logger()
 
-	acache := core.AlwaysCache{
-		InvalidateOnly: legacyModeFlag,
-	}
+	// always-cache origin instance
+	cacheConfig := core.Config{}
 
-	if configFilenameFlag != "" {
-		config, err := getConfig(configFilenameFlag)
-		if err != nil {
-			log.Error().Err(err).Msg("Cannot get config")
-		} else if len(config.Origins) != 1 {
-			log.Error().Msg("Only exactly one origin supported")
+	// load rules from filename
+	if rulesFilenameFlag != "" {
+		if configBytes, err := os.ReadFile(rulesFilenameFlag); err != nil {
+			log.Fatal().Err(err).Msgf("Cannot load rules from file %s", rulesFilenameFlag)
 		} else {
-			acache.Rules = config.Origins[0].Rules
+			var rules core.Rules
+			if err := yaml.Unmarshal(configBytes, &rules); err != nil {
+				log.Error().Err(err).Msg("Cannot get config")
+			} else {
+				cacheConfig.Rules = rules
+			}
 		}
 	}
 
 	// use configured provider, panic if none specified
 	switch providerFlag {
 	case "sqlite":
-		acache.Cache = core.NewSQLiteCache()
+		cacheConfig.Cache = core.NewSQLiteCache()
 	case "memory":
-		acache.Cache = core.NewMemCache()
+		cacheConfig.Cache = core.NewMemCache()
 	default:
 		log.Fatal().Msgf("Unsupported cache provider: %s", providerFlag)
 	}
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
-		acache.UpdateTimeout = time.Second * 15
+		cacheConfig.UpdateTimeout = time.Second * 15
 	}
 
 	// get the downstream server address
@@ -100,23 +110,21 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msg("Clould not parse url")
 		}
-		acache.OriginURL = originUrl
+		cacheConfig.OriginURL = *originUrl
 	} else if addrFlag != "" {
 		originUrl, err := url.Parse("https://" + addrFlag)
 		if err != nil {
 			log.Fatal().Err(err).Msg("Clould not parse url")
 		}
-		acache.OriginURL = originUrl
-		acache.OriginHost = hostFlag
+		cacheConfig.OriginURL = *originUrl
+		cacheConfig.OriginHost = hostFlag
 	} else {
 		log.Fatal().Msg("Please specify origin")
 	}
 
-	// set the port to listen on
-	acache.Port = portFlag
-
-	// initialize
-	err := acache.Run()
+	acache := core.CreateCache(cacheConfig)
+	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", portFlag, cacheConfig.OriginURL.String(), cacheConfig.OriginHost)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", portFlag), acache)
 
 	if err != nil {
 		panic(err)

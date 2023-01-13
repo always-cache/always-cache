@@ -33,16 +33,15 @@ func startTestServer(handler *http.ServeMux, port int) (AlwaysCache, *http.Serve
 	}()
 	// start set up acache
 	url, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
-	acache := AlwaysCache{
+	acache := CreateCache(Config{
 		Cache:         NewMemCache(),
-		OriginURL:     url,
+		OriginURL:     *url,
 		UpdateTimeout: time.Second / 2,
-	}
-	acache.Init()
+	})
 	// wait a small while to ensure server is up
 	time.Sleep(time.Millisecond * 200)
 
-	return acache, &server
+	return *acache, &server
 }
 
 func TestCacheUpdate(t *testing.T) {

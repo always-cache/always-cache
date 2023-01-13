@@ -1,14 +1,8 @@
 package core
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"crypto/tls"
-	"fmt"
 	"io"
-	"io/ioutil"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,73 +13,65 @@ import (
 	"github.com/always-cache/always-cache/rfc9111"
 	"github.com/always-cache/always-cache/rfc9211"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/hlog"
 	"github.com/rs/zerolog/log"
 )
 
-type AlwaysCache struct {
-	initialized   bool
-	Port          int
+type Config struct {
 	Cache         CacheProvider
-	OriginURL     *url.URL
+	OriginURL     url.URL
 	OriginHost    string
 	UpdateTimeout time.Duration
 	Rules         Rules
-	Client        http.Client
-	// LEGACY MODE
-	// Only invalidate cache, i.e. do not update cache on invalidation
-	InvalidateOnly bool
 }
 
-// Init initializes the always-cache instance.
+type AlwaysCache struct {
+	cache         CacheProvider
+	originURL     url.URL
+	originHost    string
+	updateTimeout time.Duration
+	rules         Rules
+	httpClient    http.Client
+}
+
+// CreateCache initializes the always-cache instance.
 // It starts the needed background processes
 // and sets up the needed variables
-func (a *AlwaysCache) Init() {
-	if a.initialized {
-		return
-	}
-	a.initialized = true
-
-	// start a goroutine to update expired entries
-	if a.UpdateTimeout != 0 {
-		go a.updateCache()
-	}
-
-	// create client instance to use for origin requests
-	a.Client = http.Client{
-		// do not follow redirects
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
+func CreateCache(config Config) *AlwaysCache {
+	a := &AlwaysCache{
+		cache:         config.Cache,
+		originURL:     config.OriginURL,
+		originHost:    config.OriginHost,
+		updateTimeout: config.UpdateTimeout,
+		rules:         config.Rules,
+		httpClient: http.Client{
+			// do not follow redirects
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 
+	// start a goroutine to update expired entries
+	if a.updateTimeout != 0 {
+		go a.updateCache()
+	}
+
 	// use provided hostname for origin if configured
-	if a.OriginHost != "" {
-		a.Client.Transport = &http.Transport{
+	if a.originHost != "" {
+		a.httpClient.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{
-				ServerName: a.OriginHost,
+				ServerName: a.originHost,
 			},
 		}
 	}
-}
 
-func (a *AlwaysCache) Run() error {
-	// initialize
-	a.Init()
-	// start the server
-	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", a.Port, a.OriginURL, a.OriginHost)
-	return http.ListenAndServe(fmt.Sprintf(":%d", a.Port), a)
+	return a
 }
 
 // ServeHTTP implements the http.Handler interface.
 // It is the main entry point for the caching middleware.
-//
-// - get matching response(s)
-// - select suitable response, if none goto store
-// - construct response
-// - store: check we may store
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// this is a temporary workaround
 	if r.URL.Path == "/.acache-update" {
 		go a.updateAll()
 		w.WriteHeader(http.StatusAccepted)
@@ -142,7 +128,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.Rules.Apply(res.response)
+	a.rules.Apply(res.response)
 
 	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
 	res.response = downstreamResponse
@@ -160,7 +146,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 	prefix := getKeyPrefix(r)
-	if entries, err := a.Cache.All(prefix); err == nil && len(entries) > 0 {
+	if entries, err := a.cache.All(prefix); err == nil && len(entries) > 0 {
 		log.Trace().Str("key", prefix).Msg("Found cached response(s)")
 		responses := make([]timedResponse, 0, len(entries))
 		for _, e := range entries {
@@ -175,11 +161,10 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 }
 
 func (a *AlwaysCache) updateIfNeeded(downReq *http.Request, upRes *http.Response) {
-	if a.InvalidateOnly {
+	if a.updateTimeout == 0 {
 		a.invalidateUris(
 			rfc9111.GetInvalidateURIs(downReq, upRes))
 	} else {
-
 		a.revalidateUris(
 			rfc9111.GetInvalidateURIs(downReq, upRes))
 	}
@@ -244,7 +229,7 @@ func (a *AlwaysCache) revalidateUris(uris []string) {
 			continue
 		}
 		key := getKeyPrefix(req)
-		if a.Cache.Has(key) {
+		if a.cache.Has(key) {
 			_, err := a.saveRequest(req, key)
 			if err != nil {
 				log.Error().Err(err).Str("key", key).Msg("Error revalidating stored request")
@@ -261,7 +246,7 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for invalidation")
 			continue
 		}
-		a.Cache.Purge(getKeyPrefix(req))
+		a.cache.Purge(getKeyPrefix(req))
 	}
 }
 
@@ -272,7 +257,7 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 	}
 	exp := rfc9111.GetExpiration(sRes.response)
 
-	if err := a.Cache.Put(key, exp, responseBytes); err != nil {
+	if err := a.cache.Put(key, exp, responseBytes); err != nil {
 		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
 		panic(err)
 	}
@@ -282,20 +267,20 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 // fetch the resource specified in the incoming request from the origin
 func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	timedRes := timedResponse{requestTime: time.Now()}
-	uri := a.OriginURL.String() + r.URL.RequestURI()
+	uri := a.originURL.String() + r.URL.RequestURI()
 	req, err := http.NewRequest(r.Method, uri, r.Body)
 	if err != nil {
 		log.Error().Err(err).Str("uri", uri).Msg("Could not create request for fetching")
 		return timedRes, err
 	}
-	req.Host = a.OriginHost
+	req.Host = a.originHost
 	copyHeader(req.Header, r.Header)
 	// do not forward connection header, this causes trouble
 	// bug surfaced it cache-tests headers-store-Connection test
 	req.Header.Del("Connection")
 	log.Trace().Msgf("Executing request %+v", *req)
 
-	originResponse, err := a.Client.Do(req)
+	originResponse, err := a.httpClient.Do(req)
 	timedRes.responseTime = time.Now()
 	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
 	if err == nil && originResponse.Header.Get("Date") == "" {
@@ -378,18 +363,18 @@ func getDelay(update string) time.Duration {
 // If it finds one, it will update the cache for that entry.
 // If it does not find any, it will sleep for the duration of the update timeout.
 func (a *AlwaysCache) updateCache() {
-	log.Info().Msgf("Starting cache update loop with timeout %s", a.UpdateTimeout)
+	log.Info().Msgf("Starting cache update loop with timeout %s", a.updateTimeout)
 	for {
-		key, expiry, err := a.Cache.Oldest()
+		key, expiry, err := a.cache.Oldest()
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
-			time.Sleep(a.UpdateTimeout)
+			time.Sleep(a.updateTimeout)
 			continue
 		}
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
-		if key != "" && expiry.Sub(time.Now()) <= a.UpdateTimeout {
+		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
 			req, err := getRequestFromKey(key)
 			if err == nil {
 				log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
@@ -400,7 +385,7 @@ func (a *AlwaysCache) updateCache() {
 					cached, err = a.saveRequest(req, key)
 				}
 				if !cached {
-					a.Cache.Purge(key)
+					a.cache.Purge(key)
 				}
 				if err != nil {
 					log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
@@ -411,17 +396,17 @@ func (a *AlwaysCache) updateCache() {
 				log.Error().Err(err).Str("key", key).Msg("Could not create request from key")
 			}
 			if err != nil {
-				a.Cache.Purge(key)
+				a.cache.Purge(key)
 			}
 		} else {
 			log.Trace().Msg("No entries expiring, pausing update")
-			time.Sleep(a.UpdateTimeout)
+			time.Sleep(a.updateTimeout)
 		}
 	}
 }
 
 func (a *AlwaysCache) updateAll() {
-	a.Cache.Keys(func(key string) {
+	a.cache.Keys(func(key string) {
 		log.Debug().Msgf("Updating key %s", key)
 		req, err := getRequestFromKey(key)
 		if err != nil {
@@ -449,113 +434,13 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	}
 	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
 		res.response = dRes
-		a.Rules.Apply(res.response)
+		a.rules.Apply(res.response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {
 		return false, err
 	}
 	return false, nil
-}
-
-// getLogger returns the logger from the request context.
-// If no logger is found, it will return the default logger.
-func getLogger(r *http.Request) *zerolog.Logger {
-	logger := hlog.FromRequest(r)
-	if logger.GetLevel() == zerolog.Disabled {
-		logger = &log.Logger
-	}
-	return logger
-}
-
-// getKeyPrefix returns the cache key for a request.
-// If it is a GET request, it will return the URL.
-// If it is a POST request, it will return the URL combined with a hash of the body.
-func getKeyPrefix(r *http.Request) string {
-	key := r.Method + ":" + r.URL.RequestURI() + "\t"
-	if r.Method == "POST" {
-		if multipartHash := multipartHash(r); multipartHash != "" {
-			return key + multipartHash
-		} else if bodyHash := bodyHash(r); bodyHash != "" {
-			return key + bodyHash
-		}
-	}
-	return key
-}
-
-func addVaryKeys(prefix string, req *http.Request, res *http.Response) string {
-	key := prefix
-	for _, name := range rfc9111.GetListHeader(res.Header, "Vary") {
-		if !rfc9111.FieldAbsent(req.Header, name) {
-			key = key + "\n" + strings.ToLower(name) + ": " + req.Header.Get(name)
-		}
-	}
-	return key
-}
-
-var errorMethodNotSupported = fmt.Errorf("Method not supported")
-
-func getRequestFromKey(key string) (*http.Request, error) {
-	if !strings.HasPrefix(key, "GET:") {
-		return nil, errorMethodNotSupported
-	}
-	keyNoVary := strings.Split(key, "\t")[0]
-	uri := strings.TrimSpace(strings.TrimLeft(keyNoVary, "GET:"))
-	return http.NewRequest("GET", uri, nil)
-}
-
-func getVaryHeaders(key string) http.Header {
-	header := make(http.Header)
-	lines := strings.Split(key, "\n")
-	for i := 1; i < len(lines); i++ {
-		entry := strings.SplitN(lines[i], ": ", 2)
-		header.Add(entry[0], entry[1])
-	}
-	return header
-}
-
-// multipartHash returns the hash of a multipart request body.
-// It returns an empty string if the request is not multipart.
-// When it returns, the request body will be rewound to the beginning.
-func multipartHash(r *http.Request) string {
-	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil {
-		return ""
-	}
-	if strings.HasPrefix(mediaType, "multipart/") {
-		body, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			panic(err)
-		}
-		r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-
-		mr := multipart.NewReader(bytes.NewBuffer(body), params["boundary"])
-		p, err := mr.NextPart()
-		if err != nil {
-			return ""
-		}
-		slurp, err := io.ReadAll(p)
-		if err != nil {
-			panic(err)
-		}
-
-		return fmt.Sprintf("%x", sha256.Sum256(slurp))
-	}
-	return ""
-}
-
-// bodyHash returns the hash of a request body.
-// When it returns, the request body will be rewound to the beginning.
-func bodyHash(r *http.Request) string {
-	if r.Body == nil {
-		return ""
-	}
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		panic(err)
-	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-	return fmt.Sprintf("%x", sha256.Sum256(body))
 }
 
 // copyHeadersTo copies the headers from one http.Header to another.
