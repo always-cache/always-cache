@@ -1,4 +1,4 @@
-module github.com/ericselin/always-cache
+module github.com/always-cache/always-cache
 
 go 1.19
 

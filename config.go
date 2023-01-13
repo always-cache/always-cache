@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/always-cache/always-cache/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -11,10 +12,10 @@ type Config struct {
 }
 
 type ConfigOrigin struct {
-	Origin        string `yaml:"origin"`
-	Host          string `yaml:"host"`
-	DisableUpdate bool   `yaml:"disableUpdate"`
-	Rules         []Rule `yaml:"rules"`
+	Origin        string      `yaml:"origin"`
+	Host          string      `yaml:"host"`
+	DisableUpdate bool        `yaml:"disableUpdate"`
+	Rules         []core.Rule `yaml:"rules"`
 }
 
 func getConfig(filename string) (Config, error) {

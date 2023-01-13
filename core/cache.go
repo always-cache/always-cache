@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericselin/always-cache/rfc9111"
-	"github.com/ericselin/always-cache/rfc9211"
+	"github.com/always-cache/always-cache/rfc9111"
+	"github.com/always-cache/always-cache/rfc9211"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
@@ -26,34 +26,34 @@ import (
 
 type AlwaysCache struct {
 	initialized   bool
-	port          int
-	cache         CacheProvider
-	originURL     *url.URL
-	originHost    string
-	updateTimeout time.Duration
-	rules         Rules
-	client        http.Client
+	Port          int
+	Cache         CacheProvider
+	OriginURL     *url.URL
+	OriginHost    string
+	UpdateTimeout time.Duration
+	Rules         Rules
+	Client        http.Client
 	// LEGACY MODE
 	// Only invalidate cache, i.e. do not update cache on invalidation
-	invalidateOnly bool
+	InvalidateOnly bool
 }
 
 // Init initializes the always-cache instance.
 // It starts the needed background processes
 // and sets up the needed variables
-func (a *AlwaysCache) init() {
+func (a *AlwaysCache) Init() {
 	if a.initialized {
 		return
 	}
 	a.initialized = true
 
 	// start a goroutine to update expired entries
-	if a.updateTimeout != 0 {
+	if a.UpdateTimeout != 0 {
 		go a.updateCache()
 	}
 
 	// create client instance to use for origin requests
-	a.client = http.Client{
+	a.Client = http.Client{
 		// do not follow redirects
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -61,10 +61,10 @@ func (a *AlwaysCache) init() {
 	}
 
 	// use provided hostname for origin if configured
-	if a.originHost != "" {
-		a.client.Transport = &http.Transport{
+	if a.OriginHost != "" {
+		a.Client.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{
-				ServerName: a.originHost,
+				ServerName: a.OriginHost,
 			},
 		}
 	}
@@ -72,10 +72,10 @@ func (a *AlwaysCache) init() {
 
 func (a *AlwaysCache) Run() error {
 	// initialize
-	a.init()
+	a.Init()
 	// start the server
-	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", a.port, a.originURL, a.originHost)
-	return http.ListenAndServe(fmt.Sprintf(":%d", a.port), a)
+	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", a.Port, a.OriginURL, a.OriginHost)
+	return http.ListenAndServe(fmt.Sprintf(":%d", a.Port), a)
 }
 
 // ServeHTTP implements the http.Handler interface.
@@ -142,7 +142,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.rules.Apply(res.response)
+	a.Rules.Apply(res.response)
 
 	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
 	res.response = downstreamResponse
@@ -160,7 +160,7 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 	prefix := getKeyPrefix(r)
-	if entries, err := a.cache.All(prefix); err == nil && len(entries) > 0 {
+	if entries, err := a.Cache.All(prefix); err == nil && len(entries) > 0 {
 		log.Trace().Str("key", prefix).Msg("Found cached response(s)")
 		responses := make([]timedResponse, 0, len(entries))
 		for _, e := range entries {
@@ -175,7 +175,7 @@ func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
 }
 
 func (a *AlwaysCache) updateIfNeeded(downReq *http.Request, upRes *http.Response) {
-	if a.invalidateOnly {
+	if a.InvalidateOnly {
 		a.invalidateUris(
 			rfc9111.GetInvalidateURIs(downReq, upRes))
 	} else {
@@ -244,7 +244,7 @@ func (a *AlwaysCache) revalidateUris(uris []string) {
 			continue
 		}
 		key := getKeyPrefix(req)
-		if a.cache.Has(key) {
+		if a.Cache.Has(key) {
 			_, err := a.saveRequest(req, key)
 			if err != nil {
 				log.Error().Err(err).Str("key", key).Msg("Error revalidating stored request")
@@ -261,7 +261,7 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for invalidation")
 			continue
 		}
-		a.cache.Purge(getKeyPrefix(req))
+		a.Cache.Purge(getKeyPrefix(req))
 	}
 }
 
@@ -272,7 +272,7 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 	}
 	exp := rfc9111.GetExpiration(sRes.response)
 
-	if err := a.cache.Put(key, exp, responseBytes); err != nil {
+	if err := a.Cache.Put(key, exp, responseBytes); err != nil {
 		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
 		panic(err)
 	}
@@ -282,20 +282,20 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 // fetch the resource specified in the incoming request from the origin
 func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	timedRes := timedResponse{requestTime: time.Now()}
-	uri := a.originURL.String() + r.URL.RequestURI()
+	uri := a.OriginURL.String() + r.URL.RequestURI()
 	req, err := http.NewRequest(r.Method, uri, r.Body)
 	if err != nil {
 		log.Error().Err(err).Str("uri", uri).Msg("Could not create request for fetching")
 		return timedRes, err
 	}
-	req.Host = a.originHost
+	req.Host = a.OriginHost
 	copyHeader(req.Header, r.Header)
 	// do not forward connection header, this causes trouble
 	// bug surfaced it cache-tests headers-store-Connection test
 	req.Header.Del("Connection")
 	log.Trace().Msgf("Executing request %+v", *req)
 
-	originResponse, err := a.client.Do(req)
+	originResponse, err := a.Client.Do(req)
 	timedRes.responseTime = time.Now()
 	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
 	if err == nil && originResponse.Header.Get("Date") == "" {
@@ -378,18 +378,18 @@ func getDelay(update string) time.Duration {
 // If it finds one, it will update the cache for that entry.
 // If it does not find any, it will sleep for the duration of the update timeout.
 func (a *AlwaysCache) updateCache() {
-	log.Info().Msgf("Starting cache update loop with timeout %s", a.updateTimeout)
+	log.Info().Msgf("Starting cache update loop with timeout %s", a.UpdateTimeout)
 	for {
-		key, expiry, err := a.cache.Oldest()
+		key, expiry, err := a.Cache.Oldest()
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
-			time.Sleep(a.updateTimeout)
+			time.Sleep(a.UpdateTimeout)
 			continue
 		}
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
-		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
+		if key != "" && expiry.Sub(time.Now()) <= a.UpdateTimeout {
 			req, err := getRequestFromKey(key)
 			if err == nil {
 				log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
@@ -400,7 +400,7 @@ func (a *AlwaysCache) updateCache() {
 					cached, err = a.saveRequest(req, key)
 				}
 				if !cached {
-					a.cache.Purge(key)
+					a.Cache.Purge(key)
 				}
 				if err != nil {
 					log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
@@ -411,17 +411,17 @@ func (a *AlwaysCache) updateCache() {
 				log.Error().Err(err).Str("key", key).Msg("Could not create request from key")
 			}
 			if err != nil {
-				a.cache.Purge(key)
+				a.Cache.Purge(key)
 			}
 		} else {
 			log.Trace().Msg("No entries expiring, pausing update")
-			time.Sleep(a.updateTimeout)
+			time.Sleep(a.UpdateTimeout)
 		}
 	}
 }
 
 func (a *AlwaysCache) updateAll() {
-	a.cache.Keys(func(key string) {
+	a.Cache.Keys(func(key string) {
 		log.Debug().Msgf("Updating key %s", key)
 		req, err := getRequestFromKey(key)
 		if err != nil {
@@ -449,7 +449,7 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	}
 	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
 		res.response = dRes
-		a.rules.Apply(res.response)
+		a.Rules.Apply(res.response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {

@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/always-cache/always-cache/core"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -62,8 +64,8 @@ func main() {
 	log.Logger = log.Level(logLevel).Output(multiWriter).
 		With().Str("version", version).Logger()
 
-	acache := AlwaysCache{
-		invalidateOnly: legacyModeFlag,
+	acache := core.AlwaysCache{
+		InvalidateOnly: legacyModeFlag,
 	}
 
 	if configFilenameFlag != "" {
@@ -73,23 +75,23 @@ func main() {
 		} else if len(config.Origins) != 1 {
 			log.Error().Msg("Only exactly one origin supported")
 		} else {
-			acache.rules = config.Origins[0].Rules
+			acache.Rules = config.Origins[0].Rules
 		}
 	}
 
 	// use configured provider, panic if none specified
 	switch providerFlag {
 	case "sqlite":
-		acache.cache = NewSQLiteCache()
+		acache.Cache = core.NewSQLiteCache()
 	case "memory":
-		acache.cache = NewMemCache()
+		acache.Cache = core.NewMemCache()
 	default:
 		log.Fatal().Msgf("Unsupported cache provider: %s", providerFlag)
 	}
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
-		acache.updateTimeout = time.Second * 15
+		acache.UpdateTimeout = time.Second * 15
 	}
 
 	// get the downstream server address
@@ -98,20 +100,20 @@ func main() {
 		if err != nil {
 			log.Fatal().Err(err).Msg("Clould not parse url")
 		}
-		acache.originURL = originUrl
+		acache.OriginURL = originUrl
 	} else if addrFlag != "" {
 		originUrl, err := url.Parse("https://" + addrFlag)
 		if err != nil {
 			log.Fatal().Err(err).Msg("Clould not parse url")
 		}
-		acache.originURL = originUrl
-		acache.originHost = hostFlag
+		acache.OriginURL = originUrl
+		acache.OriginHost = hostFlag
 	} else {
 		log.Fatal().Msg("Please specify origin")
 	}
 
 	// set the port to listen on
-	acache.port = portFlag
+	acache.Port = portFlag
 
 	// initialize
 	err := acache.Run()

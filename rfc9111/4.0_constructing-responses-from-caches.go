@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ericselin/always-cache/rfc9211"
+	"github.com/always-cache/always-cache/rfc9211"
 	"github.com/rs/zerolog/log"
 )
 

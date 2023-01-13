@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"context"
@@ -34,11 +34,11 @@ func startTestServer(handler *http.ServeMux, port int) (AlwaysCache, *http.Serve
 	// start set up acache
 	url, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
 	acache := AlwaysCache{
-		cache:         NewMemCache(),
-		originURL:     url,
-		updateTimeout: time.Second / 2,
+		Cache:         NewMemCache(),
+		OriginURL:     url,
+		UpdateTimeout: time.Second / 2,
 	}
-	acache.init()
+	acache.Init()
 	// wait a small while to ensure server is up
 	time.Sleep(time.Millisecond * 200)
 

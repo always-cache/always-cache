@@ -20,13 +20,6 @@ http-server:
 http-cache:
 	gow run . -provider memory -legacy -origin http://localhost:8000 -vv
 
-release: test build
-	cp http-tests/results-temp.json release/results.json
-	git add .
-
-build: test
-	GOOS=linux GOARCH=amd64 go build -o release/always-cache
-
 test: test-unit test-http
 
 test-unit:
@@ -40,6 +33,7 @@ test-http:
 	rm -f cache.db*
 	killall always-cache
 	killall node
-	cd http-tests; deno run -A results.ts results-temp.json ../release/results.json
+	cd http-tests; deno run -A results.ts results-temp.json results.json
+	cp http-tests/results-temp.json release/results.json
 
 .PHONY: dev build testw test test-unit test-http release
