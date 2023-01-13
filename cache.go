@@ -106,7 +106,9 @@ func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if len(responses) > 0 {
 		for _, sRes := range responses {
 			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime)
-			res.Request = r
+			if res != nil {
+				res.Request = r
+			}
 			if fwdReason == "" {
 				cacheStatus.Hit()
 				cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.response, sRes.responseTime, sRes.requestTime)
