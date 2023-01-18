@@ -16,12 +16,18 @@ import (
 
 var errorMethodNotSupported = fmt.Errorf("Method not supported")
 
+type CacheKeyer struct {
+	// Unique identifier for the origin.
+	// Usually this should be the origin - well - origin.
+	OriginId string
+}
+
 // getKeyPrefix returns the cache key for a request without the vary headers (i.e. a key prefix).
 // The returned key is suitable for finding all stored response variants for a porticular request.
 // If it is a GET request, the key depends only on the URL.
 // If it is a POST request, it will also depend on the request body.
-func getKeyPrefix(r *http.Request) string {
-	key := r.Method + ":" + r.URL.RequestURI() + "\t"
+func (c CacheKeyer) GetKeyPrefix(r *http.Request) string {
+	key := r.Method + ":" + c.OriginId + r.URL.RequestURI() + "\t"
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
 			return key + multipartHash
@@ -34,7 +40,7 @@ func getKeyPrefix(r *http.Request) string {
 
 // addVaryKeys returns the full cache key (including vary headers) based on a previously generated
 // cache key prefix and the request and response involved.
-func addVaryKeys(prefix string, req *http.Request, res *http.Response) string {
+func (c CacheKeyer) AddVaryKeys(prefix string, req *http.Request, res *http.Response) string {
 	key := prefix
 	for _, name := range rfc9111.GetListHeader(res.Header, "Vary") {
 		if !rfc9111.FieldAbsent(req.Header, name) {
@@ -47,17 +53,18 @@ func addVaryKeys(prefix string, req *http.Request, res *http.Response) string {
 // getRequestFromKey generates a caching-wise equal request than the request that resulted in the
 // provided key. This means it takes vary headers into account.
 // It returns an error if the request cannot for some reason be deducted.
-func getRequestFromKey(key string) (*http.Request, error) {
+func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
 	if !strings.HasPrefix(key, "GET:") {
 		return nil, errorMethodNotSupported
 	}
-	keyNoVary := strings.Split(key, "\t")[0]
+	keyNoOriginId := strings.TrimPrefix(key, c.OriginId)
+	keyNoVary := strings.Split(keyNoOriginId, "\t")[0]
 	uri := strings.TrimSpace(strings.TrimLeft(keyNoVary, "GET:"))
 	return http.NewRequest("GET", uri, nil)
 }
 
 // getVaryHeaders creates a http.Header instance containing all the vary keys included in a key.
-func getVaryHeaders(key string) http.Header {
+func (c CacheKeyer) GetVaryHeaders(key string) http.Header {
 	header := make(http.Header)
 	lines := strings.Split(key, "\n")
 	for i := 1; i < len(lines); i++ {

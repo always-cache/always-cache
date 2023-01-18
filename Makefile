@@ -1,9 +1,8 @@
 # do not compile with cgo, since version mismatches cause trouble
 export CGO_ENABLED=0
-provider ?= memory
 
 dev:
-	gow -s -e go,mod,yml run . -provider memory -origin https://acache.statichost.eu -vv
+	gow -s -e go,mod,yml run . -db memory -origin https://acache.statichost.eu -vv
 
 testw:
 	gow -s test ./...
@@ -18,7 +17,7 @@ http-server:
 	cd http-tests/cache-tests; npm run server
 
 http-cache:
-	gow run . -provider memory -legacy -origin http://localhost:8000 -vv
+	gow run . -db memory -legacy -origin http://localhost:8000 -vv
 
 test: test-unit test-http
 
@@ -26,7 +25,7 @@ test-unit:
 	go test ./...
 
 test-http:
-	go run . -origin http://localhost:8000 -legacy -provider $(provider) &
+	go run . -origin http://localhost:8000 -legacy -db memory &
 	cd http-tests/cache-tests; npm run server &
 	sleep 2
 	cd http-tests; deno run -A cli.ts results-temp.json

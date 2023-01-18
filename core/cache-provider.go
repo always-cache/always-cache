@@ -135,8 +135,8 @@ type SQLiteCache struct {
 	writeMutex *sync.Mutex
 }
 
-func NewSQLiteCache() SQLiteCache {
-	db, err := sql.Open("sqlite", "./cache.db")
+func NewSQLiteCache(filename string) SQLiteCache {
+	db, err := sql.Open("sqlite", filename)
 	if err != nil {
 		panic(err)
 	}

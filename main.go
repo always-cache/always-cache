@@ -23,7 +23,7 @@ var (
 	originFlag         string
 	addrFlag           string
 	hostFlag           string
-	providerFlag       string
+	dbFilenameFlag     string
 	legacyModeFlag     bool
 	verbosityTraceFlag bool
 	logFilenameFlag    string
@@ -38,7 +38,7 @@ func init() {
 	flag.StringVar(&hostFlag, "host", "", "Hostname of origin")
 	flag.StringVar(&rulesFilenameFlag, "rules", "", "Path to rules file (overrides default)")
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
-	flag.StringVar(&providerFlag, "provider", "sqlite", "Caching provider to use")
+	flag.StringVar(&dbFilenameFlag, "db", "cache.db", "Cache DB file name (use 'memory' for in-memory db)")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
 	flag.BoolVar(&verbosityTraceFlag, "vv", false, "Verbosity: trace logging")
 	flag.StringVar(&logFilenameFlag, "log-file", "", "Log file to use (in addition to stdout)")
@@ -89,15 +89,12 @@ func main() {
 		}
 	}
 
-	// use configured provider, panic if none specified
-	switch providerFlag {
-	case "sqlite":
-		cacheConfig.Cache = core.NewSQLiteCache()
-	case "memory":
-		cacheConfig.Cache = core.NewMemCache()
-	default:
-		log.Fatal().Msgf("Unsupported cache provider: %s", providerFlag)
+	// set up sqlite memory provider
+	dbFilename := dbFilenameFlag
+	if dbFilename == "memory" {
+		dbFilename = "file::memory:?cache=shared"
 	}
+	cacheConfig.Cache = core.NewSQLiteCache(dbFilename)
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {

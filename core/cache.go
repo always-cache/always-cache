@@ -18,15 +18,22 @@ import (
 )
 
 type Config struct {
-	Cache         CacheProvider
-	OriginURL     url.URL
-	OriginHost    string
+	Cache     CacheProvider
+	OriginURL url.URL
+	// Unique cache key identifier.
+	// By default OriginURL will be used.
+	CacheKey string
+	// DEPRECATED: will be changed before v1
+	OriginHost string
+	// DEPRECATED: will be changed before v1
 	UpdateTimeout time.Duration
-	Rules         Rules
+	// DEPRECATED: will be changed before v1
+	Rules Rules
 }
 
 type AlwaysCache struct {
 	cache         CacheProvider
+	keyer         CacheKeyer
 	originURL     url.URL
 	originHost    string
 	updateTimeout time.Duration
@@ -38,8 +45,15 @@ type AlwaysCache struct {
 // It starts the needed background processes
 // and sets up the needed variables
 func CreateCache(config Config) *AlwaysCache {
+	// cache key is origin url if not set in config
+	cacheKey := config.CacheKey
+	if cacheKey == "" {
+		cacheKey = config.OriginURL.String()
+	}
+
 	a := &AlwaysCache{
 		cache:         config.Cache,
+		keyer:         CacheKeyer{cacheKey},
 		originURL:     config.OriginURL,
 		originHost:    config.OriginHost,
 		updateTimeout: config.UpdateTimeout,
@@ -114,7 +128,7 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 
 	log.Trace().Interface("headers", r.Header).Msgf("Incoming request: %s %s", r.Method, r.URL.Path)
 
-	keyPrefix := getKeyPrefix(r)
+	keyPrefix := a.keyer.GetKeyPrefix(r)
 
 	log := log.With().Str("key", keyPrefix).Logger()
 	var cacheStatus rfc9211.CacheStatus
@@ -167,7 +181,7 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	res.response = downstreamResponse
 
 	if mayStore {
-		key := addVaryKeys(keyPrefix, r, res.response)
+		key := a.keyer.AddVaryKeys(keyPrefix, r, res.response)
 		a.save(key, res)
 		cacheStatus.Stored = true
 	}
@@ -178,7 +192,7 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
-	prefix := getKeyPrefix(r)
+	prefix := a.keyer.GetKeyPrefix(r)
 	if entries, err := a.cache.All(prefix); err == nil && len(entries) > 0 {
 		log.Trace().Str("key", prefix).Msg("Found cached response(s)")
 		responses := make([]timedResponse, 0, len(entries))
@@ -236,7 +250,7 @@ func (a *AlwaysCache) saveUpdates(updates []CacheUpdate) {
 				log.Error().Err(err).Str("path", update.Path).Msg("Could not create request for updates")
 				return
 			}
-			_, err = a.saveRequest(req, getKeyPrefix(req))
+			_, err = a.saveRequest(req, a.keyer.GetKeyPrefix(req))
 			if err != nil {
 				log.Error().Err(err).Str("path", update.Path).Msg("Could not save updates")
 				return
@@ -261,7 +275,7 @@ func (a *AlwaysCache) revalidateUris(uris []string) {
 			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for revalidation")
 			continue
 		}
-		key := getKeyPrefix(req)
+		key := a.keyer.GetKeyPrefix(req)
 		if a.cache.Has(key) {
 			_, err := a.saveRequest(req, key)
 			if err != nil {
@@ -279,7 +293,7 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 			log.Error().Err(err).Str("uri", uri).Msg("Could not create request for invalidation")
 			continue
 		}
-		a.cache.Purge(getKeyPrefix(req))
+		a.cache.Purge(a.keyer.GetKeyPrefix(req))
 	}
 }
 
@@ -414,7 +428,7 @@ func (a *AlwaysCache) updateCache() {
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
-			req, err := getRequestFromKey(key)
+			req, err := a.keyer.GetRequestFromKey(key)
 			if err == nil {
 				log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
 				cached, err := a.saveRequest(req, key)
@@ -447,7 +461,7 @@ func (a *AlwaysCache) updateCache() {
 func (a *AlwaysCache) updateAll() {
 	a.cache.Keys(func(key string) {
 		log.Debug().Msgf("Updating key %s", key)
-		req, err := getRequestFromKey(key)
+		req, err := a.keyer.GetRequestFromKey(key)
 		if err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("Could not create request for updating all")
 			return
