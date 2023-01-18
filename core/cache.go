@@ -301,7 +301,13 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	timedRes := timedResponse{requestTime: time.Now()}
 	uri := a.originURL.String() + r.URL.RequestURI()
-	req, err := http.NewRequest(r.Method, uri, r.Body)
+	// need to specifically set body to nil on the outgoing request if content is zero length
+	// see https://github.com/golang/go/issues/16036
+	body := r.Body
+	if r.ContentLength == 0 {
+		body = nil
+	}
+	req, err := http.NewRequest(r.Method, uri, body)
 	if err != nil {
 		log.Error().Err(err).Str("uri", uri).Msg("Could not create request for fetching")
 		return timedRes, err
