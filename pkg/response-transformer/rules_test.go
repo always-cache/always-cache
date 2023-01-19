@@ -1,4 +1,4 @@
-package core
+package responsetransformer
 
 import (
 	"net/http"

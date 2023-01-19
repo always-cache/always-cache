@@ -1,4 +1,4 @@
-package core
+package serializer
 
 import (
 	"bufio"
@@ -56,24 +56,24 @@ func TestTimedResponseSerialization(t *testing.T) {
 	// create times now and now + 1s
 	reqTime := time.Now()
 	resTime := reqTime.Add(time.Second)
-	bts, err := storedResponseToBytes(timedResponse{
-		response:     &res,
-		responseTime: resTime,
-		requestTime:  reqTime,
+	bts, err := StoredResponseToBytes(TimedResponse{
+		Response:     &res,
+		ResponseTime: resTime,
+		RequestTime:  reqTime,
 	})
 	if err != nil {
 		t.Fatalf("Error creating bytes: %+v", err)
 	}
 	// deserialize
-	res2, err := bytesToStoredResponse(bts)
+	res2, err := BytesToStoredResponse(bts)
 	if err != nil {
 		t.Fatalf("Error creating response: %+v", err)
 	}
 	// check header, times
-	if res2.response.Header.Get("Test") != "-ing" {
-		t.Fatalf("Test header wrong %+v", res2.response.Header)
+	if res2.Response.Header.Get("Test") != "-ing" {
+		t.Fatalf("Test header wrong %+v", res2.Response.Header)
 	}
-	if res2.response.Header.Get("Response-Time") != "" || res2.response.Header.Get("Response-Time") != "" {
-		t.Fatalf("Wrong amount of headers %+v", res2.response.Header)
+	if res2.Response.Header.Get("Response-Time") != "" || res2.Response.Header.Get("Response-Time") != "" {
+		t.Fatalf("Wrong amount of headers %+v", res2.Response.Header)
 	}
 }

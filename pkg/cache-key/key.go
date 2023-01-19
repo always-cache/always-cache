@@ -1,4 +1,4 @@
-package core
+package cachekey
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"github.com/always-cache/always-cache/rfc9111"
 )
 
-var errorMethodNotSupported = fmt.Errorf("Method not supported")
+var ErrorMethodNotSupported = fmt.Errorf("Method not supported")
 
 const (
 	methodSeparator = ":"
@@ -60,7 +60,7 @@ func (c CacheKeyer) AddVaryKeys(prefix string, req *http.Request, res *http.Resp
 // It returns an error if the request cannot for some reason be deducted.
 func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
 	if !strings.HasPrefix(key, "GET:") {
-		return nil, errorMethodNotSupported
+		return nil, ErrorMethodNotSupported
 	}
 	keyNoVary, _, found := strings.Cut(key, varySeparator)
 	if !found {

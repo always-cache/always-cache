@@ -1,4 +1,4 @@
-package core
+package cachekey
 
 import (
 	"net/http"

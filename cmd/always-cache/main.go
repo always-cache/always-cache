@@ -9,7 +9,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/always-cache/always-cache/core"
+	"github.com/always-cache/always-cache"
+	"github.com/always-cache/always-cache/cache"
+	"github.com/always-cache/always-cache/pkg/response-transformer"
 	"gopkg.in/yaml.v3"
 
 	"github.com/rs/zerolog"
@@ -73,14 +75,14 @@ func main() {
 		With().Str("version", version).Logger()
 
 	// always-cache origin instance
-	cacheConfig := core.Config{}
+	cacheConfig := alwayscache.Config{}
 
 	// load rules from filename
 	if rulesFilenameFlag != "" {
 		if configBytes, err := os.ReadFile(rulesFilenameFlag); err != nil {
 			log.Fatal().Err(err).Msgf("Cannot load rules from file %s", rulesFilenameFlag)
 		} else {
-			var rules core.Rules
+			var rules responsetransformer.Rules
 			if err := yaml.Unmarshal(configBytes, &rules); err != nil {
 				log.Error().Err(err).Msg("Cannot get config")
 			} else {
@@ -94,7 +96,7 @@ func main() {
 	if dbFilename == "memory" {
 		dbFilename = "file::memory:?cache=shared"
 	}
-	cacheConfig.Cache = core.NewSQLiteCache(dbFilename)
+	cacheConfig.Cache = cache.NewSQLiteCache(dbFilename)
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
@@ -119,7 +121,7 @@ func main() {
 		log.Fatal().Msg("Please specify origin")
 	}
 
-	acache := core.CreateCache(cacheConfig)
+	acache := alwayscache.CreateCache(cacheConfig)
 	log.Info().Msgf("Proxying port %v to %s (with hostname '%s')", portFlag, cacheConfig.OriginURL.String(), cacheConfig.OriginHost)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", portFlag), acache)
 

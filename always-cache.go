@@ -1,4 +1,4 @@
-package core
+package alwayscache
 
 import (
 	"crypto/tls"
@@ -10,6 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/always-cache/always-cache/cache"
+	"github.com/always-cache/always-cache/pkg/cache-key"
+	"github.com/always-cache/always-cache/pkg/response-serializer"
+	"github.com/always-cache/always-cache/pkg/response-transformer"
 	"github.com/always-cache/always-cache/rfc9111"
 	"github.com/always-cache/always-cache/rfc9211"
 
@@ -18,7 +22,7 @@ import (
 )
 
 type Config struct {
-	Cache     CacheProvider
+	Cache     cache.CacheProvider
 	OriginURL url.URL
 	// Unique cache key identifier.
 	// By default OriginURL will be used.
@@ -28,16 +32,16 @@ type Config struct {
 	// DEPRECATED: will be changed before v1
 	UpdateTimeout time.Duration
 	// DEPRECATED: will be changed before v1
-	Rules Rules
+	Rules responsetransformer.Rules
 }
 
 type AlwaysCache struct {
-	cache         CacheProvider
-	keyer         CacheKeyer
+	cache         cache.CacheProvider
+	keyer         cachekey.CacheKeyer
 	originURL     url.URL
 	originHost    string
 	updateTimeout time.Duration
-	rules         Rules
+	rules         responsetransformer.Rules
 	httpClient    http.Client
 }
 
@@ -53,7 +57,7 @@ func CreateCache(config Config) *AlwaysCache {
 
 	a := &AlwaysCache{
 		cache:         config.Cache,
-		keyer:         CacheKeyer{cacheKey},
+		keyer:         cachekey.CacheKeyer{OriginId: cacheKey},
 		originURL:     config.OriginURL,
 		originHost:    config.OriginHost,
 		updateTimeout: config.UpdateTimeout,
@@ -107,10 +111,10 @@ func (a *AlwaysCache) escapeHatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not connect to origin", http.StatusBadGateway)
 		return
 	}
-	w.WriteHeader(originRes.response.StatusCode)
-	copyHeader(w.Header(), originRes.response.Header)
-	defer originRes.response.Body.Close()
-	_, err = io.Copy(w, originRes.response.Body)
+	w.WriteHeader(originRes.Response.StatusCode)
+	copyHeader(w.Header(), originRes.Response.Header)
+	defer originRes.Response.Body.Close()
+	_, err = io.Copy(w, originRes.Response.Body)
 	if err != nil {
 		log.Error().Err(err).Msg("Error writing to client")
 	}
@@ -138,13 +142,13 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 		log.Warn().Err(err).Msg("Error getting responses")
 	} else if len(responses) > 0 {
 		for _, sRes := range responses {
-			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.response, sRes.requestTime, sRes.responseTime)
+			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.Response, sRes.RequestTime, sRes.ResponseTime)
 			if res != nil {
 				res.Request = r
 			}
 			if fwdReason == "" {
 				cacheStatus.Hit()
-				cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.response, sRes.responseTime, sRes.requestTime)
+				cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.Response, sRes.ResponseTime, sRes.RequestTime)
 				send(w, res, cacheStatus)
 				return
 			}
@@ -170,40 +174,40 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Trace().Msg("Got response from origin")
 
-	if responseIfValidated != nil && res.response.StatusCode == http.StatusNotModified {
+	if responseIfValidated != nil && res.Response.StatusCode == http.StatusNotModified {
 		send(w, responseIfValidated, cacheStatus)
 		return
 	}
 
-	a.rules.Apply(res.response)
+	a.rules.Apply(res.Response)
 
-	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.response)
-	res.response = downstreamResponse
+	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.Response)
+	res.Response = downstreamResponse
 
 	if mayStore {
-		key := a.keyer.AddVaryKeys(keyPrefix, r, res.response)
+		key := a.keyer.AddVaryKeys(keyPrefix, r, res.Response)
 		a.save(key, res)
 		cacheStatus.Stored = true
 	}
 
 	send(w, downstreamResponse, cacheStatus)
 
-	a.updateIfNeeded(r, res.response)
+	a.updateIfNeeded(r, res.Response)
 }
 
-func (a *AlwaysCache) getResponses(r *http.Request) ([]timedResponse, error) {
+func (a *AlwaysCache) getResponses(r *http.Request) ([]serializer.TimedResponse, error) {
 	prefix := a.keyer.GetKeyPrefix(r)
 	if entries, err := a.cache.All(prefix); err == nil && len(entries) > 0 {
 		log.Trace().Str("key", prefix).Msg("Found cached response(s)")
-		responses := make([]timedResponse, 0, len(entries))
+		responses := make([]serializer.TimedResponse, 0, len(entries))
 		for _, e := range entries {
-			if res, err := bytesToStoredResponse(e.Bytes); err == nil {
+			if res, err := serializer.BytesToStoredResponse(e.Bytes); err == nil {
 				responses = append(responses, res)
 			}
 		}
 		return responses, nil
 	} else {
-		return []timedResponse{}, err
+		return []serializer.TimedResponse{}, err
 	}
 }
 
@@ -297,12 +301,12 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 	}
 }
 
-func (a *AlwaysCache) save(key string, sRes timedResponse) {
-	responseBytes, err := storedResponseToBytes(sRes)
+func (a *AlwaysCache) save(key string, sRes serializer.TimedResponse) {
+	responseBytes, err := serializer.StoredResponseToBytes(sRes)
 	if err != nil {
 		panic(err)
 	}
-	exp := rfc9111.GetExpiration(sRes.response)
+	exp := rfc9111.GetExpiration(sRes.Response)
 
 	if err := a.cache.Put(key, exp, responseBytes); err != nil {
 		log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
@@ -312,8 +316,8 @@ func (a *AlwaysCache) save(key string, sRes timedResponse) {
 }
 
 // fetch the resource specified in the incoming request from the origin
-func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
-	timedRes := timedResponse{requestTime: time.Now()}
+func (a *AlwaysCache) fetch(r *http.Request) (serializer.TimedResponse, error) {
+	timedRes := serializer.TimedResponse{RequestTime: time.Now()}
 	uri := a.originURL.String() + r.URL.RequestURI()
 	// need to specifically set body to nil on the outgoing request if content is zero length
 	// see https://github.com/golang/go/issues/16036
@@ -334,12 +338,12 @@ func (a *AlwaysCache) fetch(r *http.Request) (timedResponse, error) {
 	log.Trace().Msgf("Executing request %+v", *req)
 
 	originResponse, err := a.httpClient.Do(req)
-	timedRes.responseTime = time.Now()
+	timedRes.ResponseTime = time.Now()
 	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
 	if err == nil && originResponse.Header.Get("Date") == "" {
 		originResponse.Header.Set("Date", rfc9111.ToHttpDate(time.Now()))
 	}
-	timedRes.response = originResponse
+	timedRes.Response = originResponse
 	return timedRes, err
 }
 
@@ -443,7 +447,7 @@ func (a *AlwaysCache) updateCache() {
 				if err != nil {
 					log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
 				}
-			} else if err == errorMethodNotSupported {
+			} else if err == cachekey.ErrorMethodNotSupported {
 				log.Trace().Err(err).Str("key", key).Msg("Method not supported")
 			} else {
 				log.Error().Err(err).Str("key", key).Msg("Could not create request from key")
@@ -485,9 +489,9 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.response); mayStore {
-		res.response = dRes
-		a.rules.Apply(res.response)
+	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.Response); mayStore {
+		res.Response = dRes
+		a.rules.Apply(res.Response)
 		a.save(key, res)
 		return true, nil
 	} else if err != nil {

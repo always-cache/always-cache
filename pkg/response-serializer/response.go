@@ -1,4 +1,4 @@
-package core
+package serializer
 
 import (
 	"bufio"
@@ -15,23 +15,23 @@ const (
 	requestTimeHeaderName  = "Acache-Request-Time"
 )
 
-type timedResponse struct {
-	response *http.Response
+type TimedResponse struct {
+	Response *http.Response
 	// The value of the clock at the time of the request that resulted in the stored response.
 	// Needed for age calculation.
-	requestTime time.Time
+	RequestTime time.Time
 	// The value of the clock at the time the response was received.
 	// Needed for age calculation.
-	responseTime time.Time
+	ResponseTime time.Time
 }
 
-func bytesToStoredResponse(b []byte) (timedResponse, error) {
-	sRes := timedResponse{}
+func BytesToStoredResponse(b []byte) (TimedResponse, error) {
+	sRes := TimedResponse{}
 	res, err := bytesToResponse(b)
 	if err != nil {
 		return sRes, err
 	}
-	sRes.response = res
+	sRes.Response = res
 	resTimeInt, err := strconv.ParseInt(res.Header.Get(responseTimeHeaderName), 10, 64)
 	if err != nil {
 		return sRes, err
@@ -40,19 +40,19 @@ func bytesToStoredResponse(b []byte) (timedResponse, error) {
 	if err != nil {
 		return sRes, err
 	}
-	sRes.responseTime = time.Unix(resTimeInt, 0)
-	sRes.requestTime = time.Unix(reqTimeInt, 0)
+	sRes.ResponseTime = time.Unix(resTimeInt, 0)
+	sRes.RequestTime = time.Unix(reqTimeInt, 0)
 	// delete extra headers
-	sRes.response.Header.Del(responseTimeHeaderName)
-	sRes.response.Header.Del(requestTimeHeaderName)
+	sRes.Response.Header.Del(responseTimeHeaderName)
+	sRes.Response.Header.Del(requestTimeHeaderName)
 	return sRes, nil
 }
 
 var delim = []byte("\r\n\r\n----\r\n\r\n")
 
-func storedResponseToBytes(sRes timedResponse) ([]byte, error) {
-	res := sRes.response
-	req := sRes.response.Request
+func StoredResponseToBytes(sRes TimedResponse) ([]byte, error) {
+	res := sRes.Response
+	req := sRes.Response.Request
 	buf := &bytes.Buffer{}
 
 	if req != nil {
@@ -65,9 +65,9 @@ func storedResponseToBytes(sRes timedResponse) ([]byte, error) {
 	}
 	buf.Write(delim)
 
-	res.Header.Set(responseTimeHeaderName, strconv.FormatInt(sRes.responseTime.Unix(), 10))
-	res.Header.Set(requestTimeHeaderName, strconv.FormatInt(sRes.requestTime.Unix(), 10))
-	bts, err := responseToBytes(sRes.response)
+	res.Header.Set(responseTimeHeaderName, strconv.FormatInt(sRes.ResponseTime.Unix(), 10))
+	res.Header.Set(requestTimeHeaderName, strconv.FormatInt(sRes.RequestTime.Unix(), 10))
+	bts, err := responseToBytes(sRes.Response)
 	// remove the extra headers just in case
 	res.Header.Del(responseTimeHeaderName)
 	res.Header.Del(requestTimeHeaderName)

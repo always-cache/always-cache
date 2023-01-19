@@ -1,3 +1,0 @@
-origins:
-  -  rules:
-      - default: s-maxage=60
