@@ -16,6 +16,11 @@ import (
 
 var errorMethodNotSupported = fmt.Errorf("Method not supported")
 
+const (
+	methodSeparator = ":"
+	varySeparator   = "\t"
+)
+
 type CacheKeyer struct {
 	// Unique identifier for the origin.
 	// Usually this should be the origin - well - origin.
@@ -27,7 +32,7 @@ type CacheKeyer struct {
 // If it is a GET request, the key depends only on the URL.
 // If it is a POST request, it will also depend on the request body.
 func (c CacheKeyer) GetKeyPrefix(r *http.Request) string {
-	key := r.Method + ":" + c.OriginId + r.URL.RequestURI() + "\t"
+	key := r.Method + methodSeparator + c.OriginId + r.URL.RequestURI() + varySeparator
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
 			return key + multipartHash
@@ -57,10 +62,16 @@ func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
 	if !strings.HasPrefix(key, "GET:") {
 		return nil, errorMethodNotSupported
 	}
-	keyNoOriginId := strings.TrimPrefix(key, c.OriginId)
-	keyNoVary := strings.Split(keyNoOriginId, "\t")[0]
-	uri := strings.TrimSpace(strings.TrimLeft(keyNoVary, "GET:"))
-	return http.NewRequest("GET", uri, nil)
+	keyNoVary, _, found := strings.Cut(key, varySeparator)
+	if !found {
+		return nil, fmt.Errorf("Malformed key: %s", key)
+	}
+	method, originUri, found := strings.Cut(keyNoVary, methodSeparator)
+	if !found {
+		return nil, fmt.Errorf("Malformed key: %s", key)
+	}
+	uri := strings.TrimPrefix(originUri, c.OriginId)
+	return http.NewRequest(method, uri, nil)
 }
 
 // getVaryHeaders creates a http.Header instance containing all the vary keys included in a key.
