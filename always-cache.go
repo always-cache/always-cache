@@ -432,29 +432,7 @@ func (a *AlwaysCache) updateCache() {
 		// if expiring within 1 minute, update
 		// else sleep for 1 minute
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
-			req, err := a.keyer.GetRequestFromKey(key)
-			if err == nil {
-				log.Trace().Str("key", key).Str("req.path", req.URL.Path).Time("expiry", expiry).Msg("Updating cache")
-				cached, err := a.saveRequest(req, key)
-				// if there was an error, sleep and retry
-				if !cached || err != nil {
-					time.Sleep(time.Second)
-					cached, err = a.saveRequest(req, key)
-				}
-				if !cached {
-					a.cache.Purge(key)
-				}
-				if err != nil {
-					log.Warn().Err(err).Str("key", key).Msg("Could not update cache entry")
-				}
-			} else if err == cachekey.ErrorMethodNotSupported {
-				log.Trace().Err(err).Str("key", key).Msg("Method not supported")
-			} else {
-				log.Error().Err(err).Str("key", key).Msg("Could not create request from key")
-			}
-			if err != nil {
-				a.cache.Purge(key)
-			}
+			a.updateEntry(key)
 		} else {
 			log.Trace().Msg("No entries expiring, pausing update")
 			time.Sleep(a.updateTimeout)
@@ -464,19 +442,45 @@ func (a *AlwaysCache) updateCache() {
 
 func (a *AlwaysCache) updateAll() {
 	a.cache.Keys(func(key string) {
-		log.Debug().Msgf("Updating key %s", key)
-		req, err := a.keyer.GetRequestFromKey(key)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("Could not create request for updating all")
-			return
-		}
-		cached, err := a.saveRequest(req, key)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("Could not save request")
-		} else if !cached {
-			log.Debug().Str("key", key).Msg("Update not cached")
-		}
+		a.updateEntry(key)
 	})
+}
+
+// updateKey will update the stored response identified by the given key.
+// It is assumed that the key exists in the cache, if not (and the key is still valid),
+// a new entry identified by the key is created.
+// If there is an error while updating, the key will be purged from the cache.
+func (a *AlwaysCache) updateEntry(key string) {
+	var (
+		err    error
+		cached bool
+	)
+	// log error by default (see below)
+	logError := true
+
+	// get request based on key and save response to cache
+	var req *http.Request
+	if req, err = a.keyer.GetRequestFromKey(key); err == cachekey.ErrorMethodNotSupported {
+		logError = false
+	} else if err == nil {
+		log.Trace().Str("key", key).Str("req.path", req.URL.Path).Msg("Updating cache")
+		cached, err = a.saveRequest(req, key)
+		// if there was an error, sleep and retry
+		if !cached || err != nil {
+			time.Sleep(time.Second)
+			cached, err = a.saveRequest(req, key)
+		}
+	}
+
+	// log error if not explicitly disabled
+	if err != nil && logError {
+		log.Error().Err(err).Str("key", key).Msg("Could not update cache entry")
+	}
+	// if there was an error, it should most definitely be purged
+	// if the response was not cached, it means it should be purged
+	if err != nil || !cached {
+		a.cache.Purge(key)
+	}
 }
 
 func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
