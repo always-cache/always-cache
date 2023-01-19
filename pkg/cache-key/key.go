@@ -17,6 +17,7 @@ import (
 var ErrorMethodNotSupported = fmt.Errorf("Method not supported")
 
 const (
+	originSeparator = ":"
 	methodSeparator = ":"
 	varySeparator   = "\t"
 )
@@ -25,6 +26,15 @@ type CacheKeyer struct {
 	// Unique identifier for the origin.
 	// Usually this should be the origin - well - origin.
 	OriginId string
+	// Cache key prefix for this origin
+	OriginPrefix string
+}
+
+func NewCacheKeyer(originId string) CacheKeyer {
+	return CacheKeyer{
+		OriginId:     originId,
+		OriginPrefix: originId + originSeparator,
+	}
 }
 
 // getKeyPrefix returns the cache key for a request without the vary headers (i.e. a key prefix).
@@ -32,7 +42,7 @@ type CacheKeyer struct {
 // If it is a GET request, the key depends only on the URL.
 // If it is a POST request, it will also depend on the request body.
 func (c CacheKeyer) GetKeyPrefix(r *http.Request) string {
-	key := r.Method + methodSeparator + c.OriginId + r.URL.RequestURI() + varySeparator
+	key := c.OriginId + originSeparator + r.Method + methodSeparator + r.URL.RequestURI() + varySeparator
 	if r.Method == "POST" {
 		if multipartHash := multipartHash(r); multipartHash != "" {
 			return key + multipartHash
@@ -59,18 +69,21 @@ func (c CacheKeyer) AddVaryKeys(prefix string, req *http.Request, res *http.Resp
 // provided key. This means it takes vary headers into account.
 // It returns an error if the request cannot for some reason be deducted.
 func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
-	if !strings.HasPrefix(key, "GET:") {
+	_, keyNoOrigin, found := strings.Cut(key, originSeparator)
+	if !found {
+		return nil, fmt.Errorf("Malformed key: %s", key)
+	}
+	if !strings.HasPrefix(keyNoOrigin, "GET:") {
 		return nil, ErrorMethodNotSupported
 	}
-	keyNoVary, _, found := strings.Cut(key, varySeparator)
+	keyNoVary, _, found := strings.Cut(keyNoOrigin, varySeparator)
 	if !found {
 		return nil, fmt.Errorf("Malformed key: %s", key)
 	}
-	method, originUri, found := strings.Cut(keyNoVary, methodSeparator)
+	method, uri, found := strings.Cut(keyNoVary, methodSeparator)
 	if !found {
 		return nil, fmt.Errorf("Malformed key: %s", key)
 	}
-	uri := strings.TrimPrefix(originUri, c.OriginId)
 	return http.NewRequest(method, uri, nil)
 }
 

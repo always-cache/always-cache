@@ -57,7 +57,7 @@ func CreateCache(config Config) *AlwaysCache {
 
 	a := &AlwaysCache{
 		cache:         config.Cache,
-		keyer:         cachekey.CacheKeyer{OriginId: cacheKey},
+		keyer:         cachekey.NewCacheKeyer(cacheKey),
 		originURL:     config.OriginURL,
 		originHost:    config.OriginHost,
 		updateTimeout: config.UpdateTimeout,
@@ -441,7 +441,7 @@ func (a *AlwaysCache) updateCache() {
 }
 
 func (a *AlwaysCache) updateAll() {
-	a.cache.Keys(func(key string) {
+	a.cache.AllKeys(a.keyer.OriginPrefix, func(key string) {
 		a.updateEntry(key)
 	})
 }

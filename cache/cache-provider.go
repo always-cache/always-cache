@@ -15,7 +15,11 @@ import (
 //
 // Implementations must be thread-safe!
 type CacheProvider interface {
-	// GetAll returns all cache entries that have the specific key prefix
+	// Keys calls the given callback for each key with the given prefix.
+	// It calls the callback in order to enable very large lists of keys to be
+	// processable (provider implementation might use paging, for instance).
+	AllKeys(prefix string, cb func(string))
+	// All returns all cache entries that have the specific key prefix
 	All(prefix string) ([]CacheEntry, error)
 	// Get returns the cached response for the given key, if it exists.
 	// It also returns a boolean indicating whether retrieval was successful.
@@ -34,8 +38,6 @@ type CacheProvider interface {
 	Purge(key string)
 	// Has checks if the specified key exists in the cache.
 	Has(key string) bool
-	// Keys calls the given callback for each key
-	Keys(cb func(string))
 }
 
 type CacheEntry struct {
@@ -124,9 +126,11 @@ func (m MemCache) Has(key string) bool {
 	return ok
 }
 
-func (m MemCache) Keys(cb func(string)) {
+func (m MemCache) AllKeys(prefix string, cb func(string)) {
 	for key := range m.db {
-		cb(key)
+		if strings.HasPrefix(key, prefix) {
+			cb(key)
+		}
 	}
 }
 
@@ -229,8 +233,8 @@ func (s SQLiteCache) Has(key string) bool {
 	return rows > 0
 }
 
-func (s SQLiteCache) Keys(cb func(string)) {
-	rows, err := s.db.Query("SELECT key FROM cache")
+func (s SQLiteCache) AllKeys(prefix string, cb func(string)) {
+	rows, err := s.db.Query("SELECT key FROM cache WHERE key LIKE ?", prefix+"%")
 	if err != nil {
 		return
 	}
