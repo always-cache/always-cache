@@ -87,6 +87,12 @@ func CreateCache(config Config) *AlwaysCache {
 	return a
 }
 
+type request struct {
+	originURL   string
+	cacheStatus rfc9211.CacheStatus
+	r           *http.Request
+}
+
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer a.recover(w, r)
@@ -135,8 +141,14 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	keyPrefix := a.keyer.GetKeyPrefix(r)
 
 	log := log.With().Str("key", keyPrefix).Logger()
-	var cacheStatus rfc9211.CacheStatus
 	var responseIfValidated *http.Response
+
+	// create the internal request type
+	request := request{
+		originURL:   a.originURL.String(),
+		cacheStatus: rfc9211.CacheStatus{},
+		r:           r,
+	}
 
 	if responses, err := a.getResponses(r); err != nil {
 		log.Warn().Err(err).Msg("Error getting responses")
@@ -147,12 +159,12 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 				res.Request = r
 			}
 			if fwdReason == "" {
-				cacheStatus.Hit()
-				cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.Response, sRes.ResponseTime, sRes.RequestTime)
-				send(w, res, cacheStatus)
+				request.cacheStatus.Hit()
+				request.cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.Response, sRes.ResponseTime, sRes.RequestTime)
+				send(w, res, request)
 				return
 			}
-			cacheStatus.Forward(fwdReason)
+			request.cacheStatus.Forward(fwdReason)
 			if validationReq != nil {
 				log.Trace().Msgf("Response is ok as long as it is validated with %+v", validationReq)
 				responseIfValidated = res
@@ -160,7 +172,7 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		cacheStatus.Forward(rfc9211.FwdReasonUriMiss)
+		request.cacheStatus.Forward(rfc9211.FwdReasonUriMiss)
 	}
 
 	upstreamRequest := rfc9111.GetForwardRequest(r)
@@ -175,7 +187,7 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	log.Trace().Msg("Got response from origin")
 
 	if responseIfValidated != nil && res.Response.StatusCode == http.StatusNotModified {
-		send(w, responseIfValidated, cacheStatus)
+		send(w, responseIfValidated, request)
 		return
 	}
 
@@ -187,10 +199,10 @@ func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
 	if mayStore {
 		key := a.keyer.AddVaryKeys(keyPrefix, r, res.Response)
 		a.save(key, res)
-		cacheStatus.Stored = true
+		request.cacheStatus.Stored = true
 	}
 
-	send(w, downstreamResponse, cacheStatus)
+	send(w, downstreamResponse, request)
 
 	a.updateIfNeeded(r, res.Response)
 }
@@ -347,34 +359,47 @@ func (a *AlwaysCache) fetch(r *http.Request) (serializer.TimedResponse, error) {
 	return timedRes, err
 }
 
-func send(w http.ResponseWriter, r *http.Response, status rfc9211.CacheStatus) error {
+func send(w http.ResponseWriter, res *http.Response, request request) error {
 	evt := log.Debug()
-	if r.Request == nil {
+	if res.Request == nil {
 		log.Warn().Msg("Could not get request for response to client")
 	} else {
-		evt = evt.Str("url", r.Request.URL.String())
+		evt = evt.Str("url", res.Request.URL.String())
 	}
 	isHit := 0
-	if status.FwdReason == "" {
+	if request.cacheStatus.FwdReason == "" {
 		isHit = 1
 	}
 	evt.
-		Str("status", string(status.Status)).
-		Str("fwd", string(status.FwdReason)).
-		Bool("stored", status.Stored).
-		Int("ttl", status.TimeToLive).
+		Str("method", request.r.Method).
+		Str("origin", request.originURL).
+		Str("sourceIp", getRequestSourceIp(request.r)).
+		Str("status", string(request.cacheStatus.Status)).
+		Str("fwd", string(request.cacheStatus.FwdReason)).
+		Bool("stored", request.cacheStatus.Stored).
+		Int("ttl", request.cacheStatus.TimeToLive).
 		Int("hit", isHit).
 		Msg("Sending response to client")
 
-	if r.Body != nil {
-		defer r.Body.Close()
+	if res.Body != nil {
+		defer res.Body.Close()
 	}
-	copyHeader(w.Header(), r.Header)
-	w.Header().Add("Cache-Status", status.String())
-	w.WriteHeader(r.StatusCode)
-	bytesWritten, err := io.Copy(w, r.Body)
+	copyHeader(w.Header(), res.Header)
+	w.Header().Add("Cache-Status", request.cacheStatus.String())
+	w.WriteHeader(res.StatusCode)
+	bytesWritten, err := io.Copy(w, res.Body)
 	log.Trace().Msgf("Wrote body (%d bytes)", bytesWritten)
 	return err
+}
+
+func getRequestSourceIp(r *http.Request) string {
+	// RemoteAddr is in the format:
+	// 1.2.3.4:10000 for ipv4
+	// [1:2:3]:10000 for ipv6
+	ipAndPort := r.RemoteAddr
+	portSepIdx := strings.LastIndex(ipAndPort, ":")
+	ip := ipAndPort[:portSepIdx]
+	return ip
 }
 
 func copyHeader(dst, src http.Header) {
