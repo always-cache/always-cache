@@ -69,11 +69,11 @@ func (c CacheKeyer) AddVaryKeys(prefix string, req *http.Request, res *http.Resp
 // provided key. This means it takes vary headers into account.
 // It returns an error if the request cannot for some reason be deducted.
 func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
-	_, keyNoOrigin, found := strings.Cut(key, originSeparator)
-	if !found {
-		return nil, fmt.Errorf("Malformed key: %s", key)
+	if !strings.HasPrefix(key, c.OriginPrefix) {
+		return nil, fmt.Errorf("Key and origin do not match")
 	}
-	if !strings.HasPrefix(keyNoOrigin, "GET:") {
+	keyNoOrigin := strings.TrimPrefix(key, c.OriginPrefix)
+	if !strings.HasPrefix(keyNoOrigin, "GET"+methodSeparator) {
 		return nil, ErrorMethodNotSupported
 	}
 	keyNoVary, _, found := strings.Cut(keyNoOrigin, varySeparator)

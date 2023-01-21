@@ -398,6 +398,10 @@ func getRequestSourceIp(r *http.Request) string {
 	// [1:2:3]:10000 for ipv6
 	ipAndPort := r.RemoteAddr
 	portSepIdx := strings.LastIndex(ipAndPort, ":")
+	// if not found, return
+	if portSepIdx < 0 {
+		return ipAndPort
+	}
 	ip := ipAndPort[:portSepIdx]
 	return ip
 }
