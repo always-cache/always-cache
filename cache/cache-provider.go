@@ -12,6 +12,8 @@ import (
 // CacheProvider is an interface for a cache provider.
 // It stores and retrieves []byte values, which represent HTTP responses.
 // It also keeps track of expiration times of cache entries.
+// Operating on specific keys or origin-specific prefixes is very important
+// in order for many origins to be able to be stored in the same cache.
 //
 // Implementations must be thread-safe!
 type CacheProvider interface {
@@ -32,7 +34,7 @@ type CacheProvider interface {
 	// Oldest returns the key and expiration time of the oldest entry in the cache.
 	// The oldest entry is the one with the earliest expiration time.
 	// It should not return items where the expiry is zero
-	Oldest() (string, time.Time, error)
+	Oldest(prefix string) (string, time.Time, error)
 	// Purge removes the cache entry for the given key.
 	// It is a utility method that is not used by the cache middleware.
 	Purge(key string)
@@ -99,12 +101,15 @@ func (m MemCache) Put(key string, expires time.Time, bytes []byte) error {
 	return nil
 }
 
-func (m MemCache) Oldest() (string, time.Time, error) {
+func (m MemCache) Oldest(prefix string) (string, time.Time, error) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	var oldestKey string
 	var oldestTime time.Time
 	for key, entry := range m.db {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
 		if !entry.expires.IsZero() && (oldestKey == "" || entry.expires.Before(oldestTime)) {
 			oldestKey = key
 			oldestTime = entry.expires
@@ -202,10 +207,13 @@ func (s SQLiteCache) Put(key string, expires time.Time, bytes []byte) error {
 	return err
 }
 
-func (s SQLiteCache) Oldest() (string, time.Time, error) {
+func (s SQLiteCache) Oldest(prefix string) (string, time.Time, error) {
 	var key string
 	var expires int64
-	err := s.db.QueryRow("SELECT key, expires FROM cache WHERE expires > 0 ORDER BY expires ASC LIMIT 1").Scan(&key, &expires)
+	err := s.db.QueryRow(
+		"SELECT key, expires FROM cache WHERE key LIKE ? expires > 0 ORDER BY expires ASC LIMIT 1",
+		prefix+"%",
+	).Scan(&key, &expires)
 	if err != nil {
 		return "", time.Time{}, err
 	}

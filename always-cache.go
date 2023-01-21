@@ -447,7 +447,7 @@ func getDelay(update string) time.Duration {
 func (a *AlwaysCache) updateCache() {
 	log.Info().Msgf("Starting cache update loop with timeout %s", a.updateTimeout)
 	for {
-		key, expiry, err := a.cache.Oldest()
+		key, expiry, err := a.cache.Oldest(a.keyer.OriginPrefix)
 		// if error, try again in 1 minute
 		if err != nil {
 			log.Error().Err(err).Msg("Could not get oldest entry")
