@@ -2,7 +2,6 @@ package cache
 
 import (
 	"database/sql"
-	"strings"
 	"sync"
 	"time"
 
@@ -48,103 +47,17 @@ type CacheEntry struct {
 	Bytes   []byte
 }
 
-type memCacheEntry struct {
-	expires time.Time
-	bytes   []byte
-}
-
-type MemCache struct {
-	mutex *sync.RWMutex
-	db    map[string]memCacheEntry
-}
-
-func NewMemCache() MemCache {
-	return MemCache{
-		mutex: &sync.RWMutex{},
-		db:    make(map[string]memCacheEntry),
-	}
-}
-
-func (m MemCache) All(prefix string) ([]CacheEntry, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	entries := make([]CacheEntry, 0)
-	for key, val := range m.db {
-		if strings.HasPrefix(key, prefix) {
-			entries = append(entries, CacheEntry{
-				Key:     key,
-				Bytes:   val.bytes,
-				Expires: val.expires,
-			})
-		}
-	}
-	return entries, nil
-}
-
-func (m MemCache) Get(key string) ([]byte, bool, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	entry, ok := m.db[key]
-	if !ok {
-		return nil, false, nil
-	}
-	if time.Now().After(entry.expires) {
-		return nil, false, nil
-	}
-	return entry.bytes, true, nil
-}
-
-func (m MemCache) Put(key string, expires time.Time, bytes []byte) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.db[key] = memCacheEntry{expires, bytes}
-	return nil
-}
-
-func (m MemCache) Oldest(prefix string) (string, time.Time, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	var oldestKey string
-	var oldestTime time.Time
-	for key, entry := range m.db {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		if !entry.expires.IsZero() && (oldestKey == "" || entry.expires.Before(oldestTime)) {
-			oldestKey = key
-			oldestTime = entry.expires
-		}
-	}
-	return oldestKey, oldestTime, nil
-}
-
-func (m MemCache) Purge(key string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	delete(m.db, key)
-}
-
-func (m MemCache) Has(key string) bool {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	_, ok := m.db[key]
-	return ok
-}
-
-func (m MemCache) AllKeys(prefix string, cb func(string)) {
-	for key := range m.db {
-		if strings.HasPrefix(key, prefix) {
-			cb(key)
-		}
-	}
-}
-
 type SQLiteCache struct {
 	db         *sql.DB
 	writeMutex *sync.Mutex
 }
 
+// NewSQLiteCache creates a new cache with the given filename as the db.
+// If file name is empty, a new in-memory db is opened.
 func NewSQLiteCache(filename string) SQLiteCache {
+	if filename == "" {
+		filename = "file::memory:?cache=shared"
+	}
 	db, err := sql.Open("sqlite", filename)
 	if err != nil {
 		panic(err)
@@ -211,7 +124,7 @@ func (s SQLiteCache) Oldest(prefix string) (string, time.Time, error) {
 	var key string
 	var expires int64
 	err := s.db.QueryRow(
-		"SELECT key, expires FROM cache WHERE key LIKE ? expires > 0 ORDER BY expires ASC LIMIT 1",
+		"SELECT key, expires FROM cache WHERE key LIKE ? AND expires > 0 ORDER BY expires ASC LIMIT 1",
 		prefix+"%",
 	).Scan(&key, &expires)
 	if err != nil {

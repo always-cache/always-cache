@@ -36,7 +36,7 @@ func startTestServer(handler *http.ServeMux, port int) (AlwaysCache, *http.Serve
 	// start set up acache
 	url, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
 	acache := CreateCache(Config{
-		Cache:         cache.NewMemCache(),
+		Cache:         cache.NewSQLiteCache(""),
 		OriginURL:     *url,
 		UpdateTimeout: time.Second / 2,
 	})
