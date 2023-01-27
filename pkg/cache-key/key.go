@@ -84,7 +84,12 @@ func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
 	if !found {
 		return nil, fmt.Errorf("Malformed key: %s", key)
 	}
-	return http.NewRequest(method, uri, nil)
+	req, err := http.NewRequest(method, uri, nil)
+	if err != nil {
+		return req, err
+	}
+	req.Header = c.GetVaryHeaders(key)
+	return req, nil
 }
 
 // getVaryHeaders creates a http.Header instance containing all the vary keys included in a key.

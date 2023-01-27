@@ -1,7 +1,7 @@
-import { runTests } from "../../cache-tests/client/runner.mjs";
-import tests from "../../cache-tests/tests/index.mjs";
+import { runTests, getResults } from "./cache-tests/client/runner.mjs";
+import tests from "./cache-tests/tests/index.mjs";
 // @deno-types="./types/client/test.d.ts"
-import { testResults } from "../../cache-tests/client/test.mjs";
+import { testResults } from "./cache-tests/client/test.mjs";
 
 // DISABLE: extra tests
 // import surrogate from "../../cache-tests/tests/surrogate-control.mjs";
@@ -10,8 +10,7 @@ import { testResults } from "../../cache-tests/client/test.mjs";
 // tests.push(surrogate);
 // tests.push(cacheFetch);
 
-const testId = false;
-const [resultsFile] = Deno.args;
+const [resultsFile, testId] = Deno.args;
 
 if (!resultsFile) {
   console.log("USAGE: deno run -A cli.ts [results output file]");
@@ -44,6 +43,9 @@ if (testId) {
 }
 
 await runTests(testsToRun, fetch, false, baseUrl);
+
+console.log(testResults);
+console.log(getResults())
 
 await Deno.writeTextFile(
   resultsFile,

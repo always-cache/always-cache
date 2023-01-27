@@ -6,7 +6,7 @@ import "net/http"
 // It returns true if the response may be stored given the request in question.
 // WARNING: While this creates a new response, the response body is not cloned.
 func ConstructDownstreamResponse(req *http.Request, originResponse *http.Response) (downstreamResponse *http.Response, mayBeStored bool) {
-	mayBeStored = !MustNotStore(req, originResponse)
+	mayBeStored = !mustNotStore(req, originResponse)
 
 	downstreamResponse = &http.Response{
 		Status:           originResponse.Status,
@@ -29,7 +29,7 @@ func ConstructDownstreamResponse(req *http.Request, originResponse *http.Respons
 }
 
 // § 3.  Storing Responses in Caches
-func MustNotStore(req *http.Request, res *http.Response) bool {
+func mustNotStore(req *http.Request, res *http.Response) bool {
 	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
 	// §    A cache MUST NOT store a response to a request unless:
 	// §      *  the request method is understood by the cache;

@@ -1,9 +1,12 @@
 package alwayscache
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/tls"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -11,9 +14,10 @@ import (
 	"time"
 
 	"github.com/always-cache/always-cache/cache"
-	"github.com/always-cache/always-cache/pkg/cache-key"
-	"github.com/always-cache/always-cache/pkg/response-serializer"
-	"github.com/always-cache/always-cache/pkg/response-transformer"
+	cachekey "github.com/always-cache/always-cache/pkg/cache-key"
+	serializer "github.com/always-cache/always-cache/pkg/response-serializer"
+	responsetransformer "github.com/always-cache/always-cache/pkg/response-transformer"
+	tee "github.com/always-cache/always-cache/pkg/response-writer-tee"
 	"github.com/always-cache/always-cache/rfc9111"
 	"github.com/always-cache/always-cache/rfc9211"
 
@@ -111,7 +115,10 @@ type request struct {
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer a.recover(w, r)
-	a.handle(w, r)
+	if !a.respond(w, r) {
+		a.proxy(w, r)
+	}
+	// a.handle(w, r)
 }
 
 // recover recovers from panics and sends the response to the escape hatch if needed.
@@ -139,6 +146,113 @@ func (a *AlwaysCache) escapeHatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.log.Error().Err(err).Msg("Error writing to client")
 	}
+}
+
+func (a *AlwaysCache) respond(w http.ResponseWriter, r *http.Request) bool {
+	cacheEntries, err := a.cache.All(a.keyer.GetKeyPrefix(r))
+	if err != nil {
+		a.log.Error().Err(err).Msg("Could not retrieve from cache")
+		return false
+	}
+	for _, ce := range cacheEntries {
+		originalReq, err := a.keyer.GetRequestFromKey(ce.Key)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Could not get request from key")
+			continue
+		}
+		res, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(ce.Bytes)),
+			originalReq)
+		if err != nil {
+			a.log.Error().Err(err).Msg("Could not create response")
+			continue
+		}
+		if fwdReason, validationReq, err :=
+			rfc9111.MustNotReuse(r, res, ce.RequestedAt, ce.ReceivedAt); err != nil {
+			a.log.Error().Err(err).Msg("Could not determine reusability")
+			continue
+		} else if validationReq != nil {
+			validationReq.URL.Scheme = a.originURL.Scheme
+			validationReq.URL.Host = a.originURL.Host
+			if validationRes, err := a.httpClient.Do(validationReq); err != nil {
+				a.log.Error().Err(err).Msg("Error executing validation request")
+				continue
+			} else if validationRes.StatusCode != http.StatusNotModified {
+				request := request{
+					r:   r,
+					log: a.log,
+				}
+				rfc9111.AddAgeHeader(validationRes, ce.ReceivedAt, ce.RequestedAt)
+				send(w, validationRes, request)
+				return true
+			}
+			// if we get here, the response is ok to use
+		} else if fwdReason != "" {
+			continue
+		}
+		// if we get here, the response is ok to use
+		request := request{
+			r:   r,
+			log: a.log,
+		}
+		rfc9111.AddAgeHeader(res, ce.ReceivedAt, ce.RequestedAt)
+		send(w, res, request)
+		return true
+	}
+	return false
+}
+
+func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
+	a.log.Trace().Msgf("proxying %s", r.URL.String())
+	r.Host = a.originURL.Host
+	proxy := httputil.ReverseProxy{
+		Director: a.director,
+	}
+	rwtee := tee.NewResponseSaver(w)
+	proxy.ServeHTTP(rwtee, r)
+	// save to cache in goroutine (do not slow down response)
+	go a.writeCache(*rwtee, r)
+	go a.updateIfNeeded(r, &http.Response{
+		StatusCode: rwtee.StatusCode(),
+		Header:     rwtee.Header(),
+	})
+}
+
+func (a *AlwaysCache) writeCache(rw tee.ResponseSaver, r *http.Request) {
+	res := &http.Response{
+		Header:     rw.Header(),
+		StatusCode: rw.StatusCode(),
+		Request:    r,
+	}
+	if noStore, err := rfc9111.MustNotStore(res); err != nil {
+		a.log.Error().Err(err).Msg("Error detemining if response must not be stored")
+		return
+	} else if noStore {
+		return
+	}
+	keyPrefix := a.keyer.GetKeyPrefix(r)
+	key := a.keyer.AddVaryKeys(keyPrefix, r, &http.Response{
+		Header: rw.Header(),
+	})
+	exp := rfc9111.GetExpiration(res)
+	ce := cache.CacheEntry{
+		Key:     key,
+		Expires: exp,
+		// WARNING
+		RequestedAt: time.Now(),
+		ReceivedAt:  time.Now(),
+		Bytes:       rw.Response(),
+	}
+	a.log.Trace().Msgf("Writing to cache: %v %v", key, exp)
+	err := a.cache.PutCE(ce)
+	if err != nil {
+		a.log.Error().Err(err).Msg("Error writing to cache")
+	}
+}
+
+func (a *AlwaysCache) director(req *http.Request) {
+	req.URL.Scheme = a.originURL.Scheme
+	req.Host = a.originURL.Host
+	req.URL.Host = a.originURL.Host
 }
 
 // hondle is the main entry point for the caching middleware.

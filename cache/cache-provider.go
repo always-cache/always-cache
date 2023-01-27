@@ -30,6 +30,7 @@ type CacheProvider interface {
 	// Put stores the given response in the cache under the given key.
 	// It also sets an expiration time for the entry.
 	Put(key string, expires time.Time, bytes []byte) error
+	PutCE(CacheEntry) error
 	// Oldest returns the key and expiration time of the oldest entry in the cache.
 	// The oldest entry is the one with the earliest expiration time.
 	// It should not return items where the expiry is zero
@@ -42,9 +43,11 @@ type CacheProvider interface {
 }
 
 type CacheEntry struct {
-	Key     string
-	Expires time.Time
-	Bytes   []byte
+	Key         string
+	Expires     time.Time
+	RequestedAt time.Time
+	ReceivedAt  time.Time
+	Bytes       []byte
 }
 
 type SQLiteCache struct {
@@ -62,7 +65,13 @@ func NewSQLiteCache(filename string) SQLiteCache {
 	if err != nil {
 		panic(err)
 	}
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, expires INTEGER, bytes BLOB)")
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cache (
+		key TEXT PRIMARY KEY,
+		expires INTEGER,
+		requested_at INTEGER,
+		received_at INTEGER,
+		bytes BLOB
+	)`)
 	if err != nil {
 		panic(err)
 	}
@@ -84,17 +93,21 @@ func (s SQLiteCache) All(prefix string) ([]CacheEntry, error) {
 	s.writeMutex.Lock()
 	defer s.writeMutex.Unlock()
 	entries := make([]CacheEntry, 0)
-	rows, err := s.db.Query("SELECT key, expires, bytes FROM cache WHERE key LIKE ?", prefix+"%")
+	rows, err := s.db.Query(`SELECT 
+		key, expires, requested_at, received_at, bytes
+		FROM cache WHERE key LIKE ?`, prefix+"%")
 	if err != nil {
 		return entries, err
 	}
 	for rows.Next() {
 		var entry CacheEntry
-		var exp int64
-		if err := rows.Scan(&entry.Key, &exp, &entry.Bytes); err != nil {
+		var exp, req, rec int64
+		if err := rows.Scan(&entry.Key, &exp, &req, &rec, &entry.Bytes); err != nil {
 			return entries, err
 		}
 		entry.Expires = time.Unix(exp, 0)
+		entry.RequestedAt = time.Unix(req, 0)
+		entry.ReceivedAt = time.Unix(rec, 0)
 		entries = append(entries, entry)
 	}
 	return entries, nil
@@ -117,6 +130,15 @@ func (s SQLiteCache) Put(key string, expires time.Time, bytes []byte) error {
 	s.writeMutex.Lock()
 	defer s.writeMutex.Unlock()
 	_, err := s.db.Exec("INSERT OR REPLACE INTO cache (key, expires, bytes) VALUES (?, ?, ?)", key, expires.Unix(), bytes)
+	return err
+}
+
+func (s SQLiteCache) PutCE(ce CacheEntry) error {
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO cache 
+		(key, expires, requested_at, received_at, bytes) VALUES (?, ?, ?, ?, ?)`,
+		ce.Key, ce.Expires.Unix(), ce.RequestedAt.Unix(), ce.ReceivedAt.Unix(), ce.Bytes)
 	return err
 }
 
