@@ -14,6 +14,7 @@ type ResponseSaver struct {
 	header       http.Header
 	status       int
 	wroteHeaders bool
+	statusFilter int
 }
 
 // Implementation of http.ResponseWriter
@@ -23,6 +24,10 @@ func (t *ResponseSaver) Header() http.Header {
 
 // Implementation of http.ResponseWriter
 func (t *ResponseSaver) WriteHeader(statusCode int) {
+	// do not write to underlying rw if status code equals filter
+	if statusCode == t.statusFilter {
+		t.rw = nil
+	}
 	// remember that we wrote the headers
 	t.wroteHeaders = true
 	// set the status code so we can return it later
@@ -34,8 +39,7 @@ func (t *ResponseSaver) WriteHeader(statusCode int) {
 	t.b.WriteString("\n")
 	// write to underlying http.ResponseWriter if not nil
 	if t.rw != nil {
-		// if t.rw is not nil, then t.header is the same as t.rw.Header()
-		// so we don't need to write the headers again
+		copyHeader(t.rw.Header(), t.header)
 		t.rw.WriteHeader(statusCode)
 	}
 }
@@ -71,15 +75,22 @@ func (t *ResponseSaver) StatusCode() int {
 
 // NewResponseSaver returns a new ResponseSaver.
 // If rw is not nil, the response will be written (tee'd) to it in addition to saving to buffer.
-func NewResponseSaver(w http.ResponseWriter) *ResponseSaver {
+func NewResponseSaver(w http.ResponseWriter, statusFilter ...int) *ResponseSaver {
 	rs := &ResponseSaver{
-		rw: w,
-		b:  &bytes.Buffer{},
+		rw:     w,
+		b:      &bytes.Buffer{},
+		header: http.Header{},
 	}
-	if w == nil {
-		rs.header = http.Header{}
-	} else {
-		rs.header = w.Header()
+	if len(statusFilter) == 1 {
+		rs.statusFilter = statusFilter[0]
 	}
 	return rs
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
 }

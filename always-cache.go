@@ -114,7 +114,7 @@ type request struct {
 
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer a.recover(w, r)
+	// defer a.recover(w, r)
 	if !a.respond(w, r) {
 		a.proxy(w, r)
 	}
@@ -171,18 +171,25 @@ func (a *AlwaysCache) respond(w http.ResponseWriter, r *http.Request) bool {
 			a.log.Error().Err(err).Msg("Could not determine reusability")
 			continue
 		} else if validationReq != nil {
-			validationReq.URL.Scheme = a.originURL.Scheme
-			validationReq.URL.Host = a.originURL.Host
-			if validationRes, err := a.httpClient.Do(validationReq); err != nil {
-				a.log.Error().Err(err).Msg("Error executing validation request")
-				continue
-			} else if validationRes.StatusCode != http.StatusNotModified {
-				request := request{
-					r:   r,
-					log: a.log,
-				}
-				rfc9111.AddAgeHeader(validationRes, ce.ReceivedAt, ce.RequestedAt)
-				send(w, validationRes, request)
+			proxy := httputil.ReverseProxy{
+				Director: a.director,
+			}
+			rwtee := tee.NewResponseSaver(w, http.StatusNotModified)
+
+			a.log.Trace().Msgf("Proxying...")
+			proxy.ServeHTTP(rwtee, validationReq)
+
+			a.log.Trace().Msgf("validation request status %v", rwtee.StatusCode())
+
+			// all status codes other than 304 means the response was written to the client
+			// the response will need to be saved as well
+			if rwtee.StatusCode() != http.StatusNotModified {
+				// TODO move to utility fn
+				// go a.writeCache(*rwtee, r)
+				// go a.updateIfNeeded(r, &http.Response{
+				// 	StatusCode: rwtee.StatusCode(),
+				// 	Header:     rwtee.Header(),
+				// })
 				return true
 			}
 			// if we get here, the response is ok to use
