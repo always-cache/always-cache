@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // ResponseSaver is a wrapper around http.ResponseWriter that saves the response to a buffer.
@@ -15,6 +16,7 @@ type ResponseSaver struct {
 	status       int
 	wroteHeaders bool
 	statusFilter int
+	CreatedAt    time.Time
 }
 
 // Implementation of http.ResponseWriter
@@ -77,9 +79,10 @@ func (t *ResponseSaver) StatusCode() int {
 // If rw is not nil, the response will be written (tee'd) to it in addition to saving to buffer.
 func NewResponseSaver(w http.ResponseWriter, statusFilter ...int) *ResponseSaver {
 	rs := &ResponseSaver{
-		rw:     w,
-		b:      &bytes.Buffer{},
-		header: http.Header{},
+		CreatedAt: time.Now(),
+		rw:        w,
+		b:         &bytes.Buffer{},
+		header:    http.Header{},
 	}
 	if len(statusFilter) == 1 {
 		rs.statusFilter = statusFilter[0]

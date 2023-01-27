@@ -46,8 +46,11 @@ type AlwaysCache struct {
 	originHost    string
 	log           zerolog.Logger
 	updateTimeout time.Duration
-	rules         responsetransformer.Rules
-	httpClient    http.Client
+	reverseproxy  httputil.ReverseProxy
+	// DEPRECATED
+	rules responsetransformer.Rules
+	// DEPRECATED
+	httpClient http.Client
 }
 
 // CreateCache initializes the always-cache instance.
@@ -89,6 +92,10 @@ func CreateCache(config Config) *AlwaysCache {
 		},
 	}
 
+	a.reverseproxy = httputil.ReverseProxy{
+		Director: a.director,
+	}
+
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
 		go a.updateCache()
@@ -115,9 +122,12 @@ type request struct {
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// defer a.recover(w, r)
-	if !a.respond(w, r) {
-		a.proxy(w, r)
+	for _, ce := range a.getResponsesForUri(r) {
+		if a.reuseOrValidate(w, r, ce) {
+			return
+		}
 	}
+	a.proxy(w, r)
 	// a.handle(w, r)
 }
 
@@ -148,83 +158,85 @@ func (a *AlwaysCache) escapeHatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *AlwaysCache) respond(w http.ResponseWriter, r *http.Request) bool {
-	cacheEntries, err := a.cache.All(a.keyer.GetKeyPrefix(r))
-	if err != nil {
-		a.log.Error().Err(err).Msg("Could not retrieve from cache")
+func (a *AlwaysCache) reuseOrValidate(w http.ResponseWriter, r *http.Request, ce cache.CacheEntry) bool {
+	res := a.createStoredResponse(ce)
+	if fwdReason, validationReq, err := rfc9111.MustNotReuse(r, res, ce.RequestedAt, ce.ReceivedAt); err != nil {
+		a.log.Error().Err(err).Msg("Could not determine reusability")
+		return false
+	} else if validationReq != nil {
+		if a.sendToClientIfValidationFailed(w, r, validationReq) {
+			return true
+		}
+	} else if fwdReason != "" {
 		return false
 	}
-	for _, ce := range cacheEntries {
-		originalReq, err := a.keyer.GetRequestFromKey(ce.Key)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Could not get request from key")
-			continue
-		}
-		res, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(ce.Bytes)),
-			originalReq)
-		if err != nil {
-			a.log.Error().Err(err).Msg("Could not create response")
-			continue
-		}
-		if fwdReason, validationReq, err :=
-			rfc9111.MustNotReuse(r, res, ce.RequestedAt, ce.ReceivedAt); err != nil {
-			a.log.Error().Err(err).Msg("Could not determine reusability")
-			continue
-		} else if validationReq != nil {
-			proxy := httputil.ReverseProxy{
-				Director: a.director,
-			}
-			rwtee := tee.NewResponseSaver(w, http.StatusNotModified)
+	// if we get here, the response is ok to use
+	a.sendStoredResponse(w, r, res, ce)
+	return true
+}
 
-			a.log.Trace().Msgf("Proxying...")
-			proxy.ServeHTTP(rwtee, validationReq)
+func (a *AlwaysCache) sendStoredResponse(w http.ResponseWriter, r *http.Request, res *http.Response, ce cache.CacheEntry) {
+	request := request{
+		r:   r,
+		log: a.log,
+	}
+	rfc9111.AddAgeHeader(res, ce.ReceivedAt, ce.RequestedAt)
+	send(w, res, request)
+}
 
-			a.log.Trace().Msgf("validation request status %v", rwtee.StatusCode())
-
-			// all status codes other than 304 means the response was written to the client
-			// the response will need to be saved as well
-			if rwtee.StatusCode() != http.StatusNotModified {
-				// TODO move to utility fn
-				// go a.writeCache(*rwtee, r)
-				// go a.updateIfNeeded(r, &http.Response{
-				// 	StatusCode: rwtee.StatusCode(),
-				// 	Header:     rwtee.Header(),
-				// })
-				return true
-			}
-			// if we get here, the response is ok to use
-		} else if fwdReason != "" {
-			continue
-		}
-		// if we get here, the response is ok to use
-		request := request{
-			r:   r,
-			log: a.log,
-		}
-		rfc9111.AddAgeHeader(res, ce.ReceivedAt, ce.RequestedAt)
-		send(w, res, request)
+func (a *AlwaysCache) sendToClientIfValidationFailed(w http.ResponseWriter, clientRequest, validationReq *http.Request) bool {
+	rwtee := tee.NewResponseSaver(w, http.StatusNotModified)
+	a.reverseproxy.ServeHTTP(rwtee, validationReq)
+	// all status codes other than 304 means the response was written to the client
+	// the response will need to be saved as well
+	if rwtee.StatusCode() != http.StatusNotModified {
+		go a.updateResposeAndLocations(rwtee, clientRequest)
 		return true
 	}
 	return false
 }
 
-func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
-	a.log.Trace().Msgf("proxying %s", r.URL.String())
-	r.Host = a.originURL.Host
-	proxy := httputil.ReverseProxy{
-		Director: a.director,
+func (a *AlwaysCache) createStoredResponse(ce cache.CacheEntry) *http.Response {
+	originalReq, err := a.keyer.GetRequestFromKey(ce.Key)
+	if err != nil {
+		a.log.Error().Err(err).Msg("Could not get request from key")
+		return nil
 	}
-	rwtee := tee.NewResponseSaver(w)
-	proxy.ServeHTTP(rwtee, r)
-	// save to cache in goroutine (do not slow down response)
-	go a.writeCache(*rwtee, r)
-	go a.updateIfNeeded(r, &http.Response{
-		StatusCode: rwtee.StatusCode(),
-		Header:     rwtee.Header(),
+	res, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(ce.Bytes)), originalReq)
+	if err != nil {
+		a.log.Error().Err(err).Msg("Could not create response")
+		return nil
+	}
+	return res
+}
+
+func (a *AlwaysCache) getResponsesForUri(r *http.Request) []cache.CacheEntry {
+	keyUriPrefix := a.keyer.GetKeyPrefix(r)
+	cacheEntries, err := a.cache.All(keyUriPrefix)
+	if err != nil {
+		a.log.Error().Err(err).Msg("Could not retrieve from cache")
+		return nil
+	}
+	return cacheEntries
+}
+
+func (a *AlwaysCache) updateResposeAndLocations(rw *tee.ResponseSaver, r *http.Request) {
+	a.writeCache(rw, r)
+	a.updateIfNeeded(r, &http.Response{
+		StatusCode: rw.StatusCode(),
+		Header:     rw.Header(),
 	})
 }
 
-func (a *AlwaysCache) writeCache(rw tee.ResponseSaver, r *http.Request) {
+func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
+	a.log.Trace().Msgf("proxying %s", r.URL.String())
+	rwtee := tee.NewResponseSaver(w)
+	a.reverseproxy.ServeHTTP(rwtee, r)
+	// save to cache in goroutine (do not slow down response)
+	go a.updateResposeAndLocations(rwtee, r)
+}
+
+func (a *AlwaysCache) writeCache(rw *tee.ResponseSaver, r *http.Request) {
 	res := &http.Response{
 		Header:     rw.Header(),
 		StatusCode: rw.StatusCode(),
@@ -242,10 +254,9 @@ func (a *AlwaysCache) writeCache(rw tee.ResponseSaver, r *http.Request) {
 	})
 	exp := rfc9111.GetExpiration(res)
 	ce := cache.CacheEntry{
-		Key:     key,
-		Expires: exp,
-		// WARNING
-		RequestedAt: time.Now(),
+		Key:         key,
+		Expires:     exp,
+		RequestedAt: rw.CreatedAt,
 		ReceivedAt:  time.Now(),
 		Bytes:       rw.Response(),
 	}
