@@ -19,15 +19,16 @@ type Rule struct {
 	Headers  map[string]string `yaml:"headers"`
 }
 
-func (r Rules) Apply(res *http.Response) {
+func (r Rules) Apply(res *http.Response) error {
 	// only apply rules for successes
 	if res.StatusCode != http.StatusOK {
-		return
+		return nil
 	}
 	// if rule found, apply to response
 	if rule := r.find(res); rule != nil {
 		applyRuleToResponse(*rule, res)
 	}
+	return nil
 }
 
 func applyRuleToResponse(rule Rule, res *http.Response) {

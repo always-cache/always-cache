@@ -4,6 +4,9 @@ export CGO_ENABLED=0
 dev:
 	cd cmd/always-cache; gow -s -e go,mod,yml -w ../.. run . -db memory -origin https://www.acache.io -vv
 
+dev-magfab:
+	cd cmd/always-cache; gow -s -e go,mod,yml -w ../.. run . -db memory -host magicfabricblog.com -addr 46.30.215.254 -vv
+
 testw:
 	gow -s test ./...
 

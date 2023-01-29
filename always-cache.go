@@ -25,14 +25,13 @@ import (
 )
 
 type Config struct {
-	Cache     cache.CacheProvider
-	OriginURL url.URL
-	Logger    *zerolog.Logger
+	Cache      cache.CacheProvider
+	OriginURL  url.URL
+	OriginHost string
+	Logger     *zerolog.Logger
 	// Unique cache key identifier.
 	// By default OriginURL will be used.
 	CacheKey string
-	// DEPRECATED: will be changed before v1
-	OriginHost string
 	// DEPRECATED: will be changed before v1
 	UpdateTimeout time.Duration
 	// DEPRECATED: will be changed before v1
@@ -42,15 +41,9 @@ type Config struct {
 type AlwaysCache struct {
 	cache         cache.CacheProvider
 	keyer         cachekey.CacheKeyer
-	originURL     url.URL
-	originHost    string
 	log           zerolog.Logger
 	updateTimeout time.Duration
 	reverseproxy  httputil.ReverseProxy
-	// DEPRECATED
-	rules responsetransformer.Rules
-	// DEPRECATED
-	httpClient http.Client
 }
 
 // CreateCache initializes the always-cache instance.
@@ -79,35 +72,31 @@ func CreateCache(config Config) *AlwaysCache {
 	a := &AlwaysCache{
 		cache:         config.Cache,
 		keyer:         cachekey.NewCacheKeyer(cacheKey),
-		originURL:     config.OriginURL,
-		originHost:    config.OriginHost,
 		log:           logger,
 		updateTimeout: config.UpdateTimeout,
-		rules:         config.Rules,
-		httpClient: http.Client{
-			// do not follow redirects
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
+	}
+
+	host := config.OriginURL.Host
+	hostHeader := host
+	transport := http.DefaultTransport
+	if config.OriginHost != "" {
+		hostHeader = config.OriginHost
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				ServerName: config.OriginHost,
 			},
-		},
+		}
 	}
 
 	a.reverseproxy = httputil.ReverseProxy{
-		Director: a.director,
+		Director:       createDirector(config.OriginURL.Scheme, host, hostHeader),
+		Transport:      transport,
+		ModifyResponse: config.Rules.Apply,
 	}
 
 	// start a goroutine to update expired entries
 	if a.updateTimeout != 0 {
 		go a.updateCache()
-	}
-
-	// use provided hostname for origin if configured
-	if a.originHost != "" {
-		a.httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				ServerName: a.originHost,
-			},
-		}
 	}
 
 	return a
@@ -121,41 +110,12 @@ type request struct {
 
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// defer a.recover(w, r)
 	for _, ce := range a.getResponsesForUri(r) {
 		if a.reuseOrValidate(w, r, ce) {
 			return
 		}
 	}
 	a.proxy(w, r)
-	// a.handle(w, r)
-}
-
-// recover recovers from panics and sends the response to the escape hatch if needed.
-func (a *AlwaysCache) recover(w http.ResponseWriter, r *http.Request) {
-	if err := recover(); err != nil {
-		a.escapeHatch(w, r)
-		a.log.WithLevel(zerolog.PanicLevel).Interface("error", err).Msg("Panic in cache handler")
-	}
-}
-
-// escapeHatch is a fallback handler that just proxies the request to the origin.
-func (a *AlwaysCache) escapeHatch(w http.ResponseWriter, r *http.Request) {
-	originReq := rfc9111.GetForwardRequest(r)
-	// TODO use just httpClient.Do here (by creating the request first)
-	originRes, err := a.fetch(originReq)
-	if err != nil {
-		a.log.Error().Err(err).Msg("Error connecting to origin")
-		http.Error(w, "Could not connect to origin", http.StatusBadGateway)
-		return
-	}
-	w.WriteHeader(originRes.Response.StatusCode)
-	copyHeader(w.Header(), originRes.Response.Header)
-	defer originRes.Response.Body.Close()
-	_, err = io.Copy(w, originRes.Response.Body)
-	if err != nil {
-		a.log.Error().Err(err).Msg("Error writing to client")
-	}
 }
 
 func (a *AlwaysCache) reuseOrValidate(w http.ResponseWriter, r *http.Request, ce cache.CacheEntry) bool {
@@ -236,17 +196,16 @@ func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
 	go a.updateResposeAndLocations(rwtee, r)
 }
 
-func (a *AlwaysCache) writeCache(rw *tee.ResponseSaver, r *http.Request) {
+func (a *AlwaysCache) writeCache(rw *tee.ResponseSaver, r *http.Request) (bool, error) {
 	res := &http.Response{
 		Header:     rw.Header(),
 		StatusCode: rw.StatusCode(),
 		Request:    r,
 	}
 	if noStore, err := rfc9111.MustNotStore(res); err != nil {
-		a.log.Error().Err(err).Msg("Error detemining if response must not be stored")
-		return
+		return false, err
 	} else if noStore {
-		return
+		return false, nil
 	}
 	keyPrefix := a.keyer.GetKeyPrefix(r)
 	key := a.keyer.AddVaryKeys(keyPrefix, r, &http.Response{
@@ -262,96 +221,17 @@ func (a *AlwaysCache) writeCache(rw *tee.ResponseSaver, r *http.Request) {
 	}
 	a.log.Trace().Msgf("Writing to cache: %v %v", key, exp)
 	err := a.cache.PutCE(ce)
-	if err != nil {
-		a.log.Error().Err(err).Msg("Error writing to cache")
-	}
+	return err == nil, err
 }
 
-func (a *AlwaysCache) director(req *http.Request) {
-	req.URL.Scheme = a.originURL.Scheme
-	req.Host = a.originURL.Host
-	req.URL.Host = a.originURL.Host
-}
-
-// hondle is the main entry point for the caching middleware.
-func (a *AlwaysCache) handle(w http.ResponseWriter, r *http.Request) {
-	// this is a temporary workaround
-	if r.URL.Path == "/.acache-update" {
-		go a.updateAll()
-		w.WriteHeader(http.StatusAccepted)
-		io.WriteString(w, "Updating all content...")
-		return
-	}
-
-	a.log.Trace().Interface("headers", r.Header).Msgf("Incoming request: %s %s", r.Method, r.URL.Path)
-
-	keyPrefix := a.keyer.GetKeyPrefix(r)
-
-	log := a.log.With().Str("key", keyPrefix).Logger()
-	var responseIfValidated *http.Response
-
-	// create the internal request type
-	request := request{
-		r:           r,
-		cacheStatus: rfc9211.CacheStatus{},
-		log:         log,
-	}
-
-	if responses, err := a.getResponses(r); err != nil {
-		log.Warn().Err(err).Msg("Error getting responses")
-	} else if len(responses) > 0 {
-		for _, sRes := range responses {
-			res, validationReq, fwdReason := rfc9111.ConstructReusableResponse(r, sRes.Response, sRes.RequestTime, sRes.ResponseTime)
-			if res != nil {
-				res.Request = r
-			}
-			if fwdReason == "" {
-				request.cacheStatus.Hit()
-				request.cacheStatus.TimeToLive = rfc9111.TimeToLive(sRes.Response, sRes.ResponseTime, sRes.RequestTime)
-				send(w, res, request)
-				return
-			}
-			request.cacheStatus.Forward(fwdReason)
-			if validationReq != nil {
-				log.Trace().Msgf("Response is ok as long as it is validated with %+v", validationReq)
-				responseIfValidated = res
-				r = validationReq
-			}
+func createDirector(scheme, host, hostHeader string) func(req *http.Request) {
+	return func(req *http.Request) {
+		req.URL.Scheme = scheme
+		req.URL.Host = host
+		if hostHeader != "" {
+			req.Host = hostHeader
 		}
-	} else {
-		request.cacheStatus.Forward(rfc9211.FwdReasonUriMiss)
 	}
-
-	upstreamRequest := rfc9111.GetForwardRequest(r)
-
-	log.Trace().Msg("Forwarding to origin")
-	res, err := a.fetch(upstreamRequest)
-	if err != nil {
-		http.Error(w, "Error contacting origin", http.StatusBadGateway)
-		log.Error().Err(err).Msg("Could not fetch response from server")
-		return
-	}
-	log.Trace().Msg("Got response from origin")
-
-	if responseIfValidated != nil && res.Response.StatusCode == http.StatusNotModified {
-		send(w, responseIfValidated, request)
-		return
-	}
-
-	a.rules.Apply(res.Response)
-
-	downstreamResponse, mayStore := rfc9111.ConstructDownstreamResponse(r, res.Response)
-	res.Response = downstreamResponse
-
-	if mayStore {
-		key := a.keyer.AddVaryKeys(keyPrefix, r, res.Response)
-		a.save(key, res)
-		request.cacheStatus.Stored = true
-	}
-
-	send(w, downstreamResponse, request)
-
-	a.updateIfNeeded(r, res.Response)
 }
 
 func (a *AlwaysCache) getResponses(r *http.Request) ([]serializer.TimedResponse, error) {
@@ -458,52 +338,6 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 		}
 		a.cache.Purge(a.keyer.GetKeyPrefix(req))
 	}
-}
-
-func (a *AlwaysCache) save(key string, sRes serializer.TimedResponse) {
-	responseBytes, err := serializer.StoredResponseToBytes(sRes)
-	if err != nil {
-		panic(err)
-	}
-	exp := rfc9111.GetExpiration(sRes.Response)
-
-	if err := a.cache.Put(key, exp, responseBytes); err != nil {
-		a.log.Error().Err(err).Str("key", key).Msg("Could not write to cache")
-		panic(err)
-	}
-	a.log.Trace().Str("key", key).Time("expiry", exp).Msg("Cache write")
-}
-
-// fetch the resource specified in the incoming request from the origin
-func (a *AlwaysCache) fetch(r *http.Request) (serializer.TimedResponse, error) {
-	timedRes := serializer.TimedResponse{RequestTime: time.Now()}
-	uri := a.originURL.String() + r.URL.RequestURI()
-	// need to specifically set body to nil on the outgoing request if content is zero length
-	// see https://github.com/golang/go/issues/16036
-	body := r.Body
-	if r.ContentLength == 0 {
-		body = nil
-	}
-	req, err := http.NewRequest(r.Method, uri, body)
-	if err != nil {
-		a.log.Error().Err(err).Str("uri", uri).Msg("Could not create request for fetching")
-		return timedRes, err
-	}
-	req.Host = a.originHost
-	copyHeader(req.Header, r.Header)
-	// do not forward connection header, this causes trouble
-	// bug surfaced it cache-tests headers-store-Connection test
-	req.Header.Del("Connection")
-	a.log.Trace().Msgf("Executing request %+v", *req)
-
-	originResponse, err := a.httpClient.Do(req)
-	timedRes.ResponseTime = time.Now()
-	// as per https://www.rfc-editor.org/rfc/rfc9110#section-6.6.1-8
-	if err == nil && originResponse.Header.Get("Date") == "" {
-		originResponse.Header.Set("Date", rfc9111.ToHttpDate(time.Now()))
-	}
-	timedRes.Response = originResponse
-	return timedRes, err
 }
 
 func send(w http.ResponseWriter, res *http.Response, request request) error {
@@ -665,19 +499,10 @@ func (a *AlwaysCache) saveRequest(req *http.Request, key string) (bool, error) {
 		Str("key", key).
 		Msg("Requesting content from origin")
 
-	res, err := a.fetch(req)
-	if err != nil {
-		return false, err
-	}
-	if dRes, mayStore := rfc9111.ConstructDownstreamResponse(req, res.Response); mayStore {
-		res.Response = dRes
-		a.rules.Apply(res.Response)
-		a.save(key, res)
-		return true, nil
-	} else if err != nil {
-		return false, err
-	}
-	return false, nil
+	rw := tee.NewResponseSaver(nil)
+	a.reverseproxy.ServeHTTP(rw, req)
+
+	return a.writeCache(rw, req)
 }
 
 // copyHeadersTo copies the headers from one http.Header to another.
