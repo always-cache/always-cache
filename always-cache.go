@@ -111,37 +111,46 @@ type request struct {
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, ce := range a.getResponsesForUri(r) {
-		if a.reuseOrValidate(w, r, ce) {
+		if a.reuseOrValidate(w, r, ce) == "" {
 			return
 		}
 	}
 	a.proxy(w, r)
 }
 
-func (a *AlwaysCache) reuseOrValidate(w http.ResponseWriter, r *http.Request, ce cache.CacheEntry) bool {
+func (a *AlwaysCache) reuseOrValidate(w http.ResponseWriter, r *http.Request, ce cache.CacheEntry) rfc9211.FwdReason {
 	res := a.createStoredResponse(ce)
 	if fwdReason, validationReq, err := rfc9111.MustNotReuse(r, res, ce.RequestedAt, ce.ReceivedAt); err != nil {
 		a.log.Error().Err(err).Msg("Could not determine reusability")
-		return false
+		return rfc9211.FwdReasonMiss
 	} else if validationReq != nil {
 		if a.sendToClientIfValidationFailed(w, r, validationReq) {
-			return true
+			return ""
 		}
 	} else if fwdReason != "" {
-		return false
+		return fwdReason
 	}
 	// if we get here, the response is ok to use
-	a.sendStoredResponse(w, r, res, ce)
-	return true
+	cs := rfc9211.CacheStatus{}
+	cs.Hit()
+	a.sendStoredResponse(w, r, res, ce, cs)
+	return cs.FwdReason
 }
 
-func (a *AlwaysCache) sendStoredResponse(w http.ResponseWriter, r *http.Request, res *http.Response, ce cache.CacheEntry) {
-	request := request{
-		r:   r,
-		log: a.log,
-	}
+func (a *AlwaysCache) sendStoredResponse(w http.ResponseWriter, r *http.Request, res *http.Response, ce cache.CacheEntry, cacheStatus rfc9211.CacheStatus) {
 	rfc9111.AddAgeHeader(res, ce.ReceivedAt, ce.RequestedAt)
-	send(w, res, request)
+	if res.Body != nil {
+		defer res.Body.Close()
+	}
+	copyHeader(w.Header(), res.Header)
+	w.Header().Add("Cache-Status", cacheStatus.String())
+	w.WriteHeader(res.StatusCode)
+	bytesWritten, err := io.Copy(w, res.Body)
+	if err != nil {
+		a.log.Error().Err(err).Msg("Could not write response body to client")
+	}
+	a.logRequest(r, cacheStatus)
+	a.log.Trace().Msgf("Wrote body (%d bytes)", bytesWritten)
 }
 
 func (a *AlwaysCache) sendToClientIfValidationFailed(w http.ResponseWriter, clientRequest, validationReq *http.Request) bool {
@@ -190,8 +199,16 @@ func (a *AlwaysCache) updateResposeAndLocations(rw *tee.ResponseSaver, r *http.R
 
 func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
 	a.log.Trace().Msgf("proxying %s", r.URL.String())
+	// set cache-status on underlying rw only (i.e. do not save to cache)
+	cs := rfc9211.CacheStatus{}
+	cs.Forward(rfc9211.FwdReasonUriMiss)
+	w.Header().Add("Cache-Status", cs.String())
+
 	rwtee := tee.NewResponseSaver(w)
 	a.reverseproxy.ServeHTTP(rwtee, r)
+
+	// log request
+	go a.logRequest(r, cs)
 	// save to cache in goroutine (do not slow down response)
 	go a.updateResposeAndLocations(rwtee, r)
 }
@@ -340,36 +357,21 @@ func (a *AlwaysCache) invalidateUris(uris []string) {
 	}
 }
 
-func send(w http.ResponseWriter, res *http.Response, request request) error {
-	evt := request.log.Debug()
-	if res.Request == nil {
-		request.log.Warn().Msg("Could not get request for response to client")
-	} else {
-		evt = evt.Str("url", res.Request.URL.String())
-	}
+func (a *AlwaysCache) logRequest(r *http.Request, cs rfc9211.CacheStatus) {
 	isHit := 0
-	if request.cacheStatus.FwdReason == "" {
+	if cs.FwdReason == "" {
 		isHit = 1
 	}
-	evt.
-		Str("method", request.r.Method).
-		Str("sourceIp", getRequestSourceIp(request.r)).
-		Str("status", string(request.cacheStatus.Status)).
-		Str("fwd", string(request.cacheStatus.FwdReason)).
-		Bool("stored", request.cacheStatus.Stored).
-		Int("ttl", request.cacheStatus.TimeToLive).
+	a.log.Debug().
+		Str("method", r.Method).
+		Str("url", r.URL.String()).
+		Str("sourceIp", getRequestSourceIp(r)).
+		Str("status", string(cs.Status)).
+		Str("fwd", string(cs.FwdReason)).
+		Bool("stored", cs.Stored).
+		Int("ttl", cs.TimeToLive).
 		Int("hit", isHit).
 		Msg("Sending response to client")
-
-	if res.Body != nil {
-		defer res.Body.Close()
-	}
-	copyHeader(w.Header(), res.Header)
-	w.Header().Add("Cache-Status", request.cacheStatus.String())
-	w.WriteHeader(res.StatusCode)
-	bytesWritten, err := io.Copy(w, res.Body)
-	request.log.Trace().Msgf("Wrote body (%d bytes)", bytesWritten)
-	return err
 }
 
 func getRequestSourceIp(r *http.Request) string {
