@@ -39,16 +39,11 @@ func NewCacheKeyer(originId string) CacheKeyer {
 
 // getKeyPrefix returns the cache key for a request without the vary headers (i.e. a key prefix).
 // The returned key is suitable for finding all stored response variants for a porticular request.
-// If it is a GET request, the key depends only on the URL.
-// If it is a POST request, it will also depend on the request body.
+// If the request has a `Cache-Key` header, that value is included in the key prefix.
 func (c CacheKeyer) GetKeyPrefix(r *http.Request) string {
 	key := c.OriginId + originSeparator + r.Method + methodSeparator + r.URL.RequestURI() + varySeparator
-	if r.Method == "POST" {
-		if multipartHash := multipartHash(r); multipartHash != "" {
-			return key + multipartHash
-		} else if bodyHash := bodyHash(r); bodyHash != "" {
-			return key + bodyHash
-		}
+	if ck := r.Header.Get("Cache-Key"); ck != "" {
+		key += ck
 	}
 	return key
 }

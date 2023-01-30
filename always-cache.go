@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -102,6 +103,39 @@ func CreateCache(config Config) *AlwaysCache {
 	return a
 }
 
+type requestModifier func(*http.Request)
+type responseModifier func(*http.Response) error
+
+func createRequestHelloWorlder(next requestModifier) requestModifier {
+	return func(r *http.Request) {
+		r.GetBody = func() (io.ReadCloser, error) {
+			fmt.Printf("request %p url %p\n", r, r.URL)
+			return io.NopCloser(strings.NewReader("hello world")), nil
+		}
+		r.Header.Add("Cache-Key", "hello world")
+		if next != nil {
+			next(r)
+		}
+	}
+}
+
+func createResponseHelloWorlder(next responseModifier) responseModifier {
+	return func(res *http.Response) error {
+		body, err := res.Request.GetBody()
+		if err != nil {
+			return err
+		}
+		buf := new(strings.Builder)
+		_, err = io.Copy(buf, body)
+		if err != nil {
+			return err
+		}
+		str := buf.String()
+		fmt.Println("request body", str)
+		return next(res)
+	}
+}
+
 type request struct {
 	r           *http.Request
 	cacheStatus rfc9211.CacheStatus
@@ -110,6 +144,7 @@ type request struct {
 
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	createRequestHelloWorlder(nil)(r)
 	for _, ce := range a.getResponsesForUri(r) {
 		if a.reuseOrValidate(w, r, ce) == "" {
 			return
