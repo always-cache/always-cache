@@ -82,7 +82,7 @@ func main() {
 
 	// if updates not disabled, update every minute
 	if !legacyModeFlag {
-		cacheConfig.UpdateTimeout = time.Second * 15
+		cacheConfig.UpdateTimeout = time.Second * 5
 	}
 
 	// get the downstream server address

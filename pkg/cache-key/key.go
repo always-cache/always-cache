@@ -1,13 +1,7 @@
 package cachekey
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -35,6 +29,12 @@ func NewCacheKeyer(originId string) CacheKeyer {
 		OriginId:     originId,
 		OriginPrefix: originId + originSeparator,
 	}
+}
+
+// MethodPrefix gets the key prefix for the origin with the given method.
+// E.g. prefix for all GET requests in the coche.
+func (c CacheKeyer) MethodPrefix(method string) string {
+	return c.OriginId + originSeparator + method + methodSeparator
 }
 
 // getKeyPrefix returns the cache key for a request without the vary headers (i.e. a key prefix).
@@ -68,9 +68,6 @@ func (c CacheKeyer) GetRequestFromKey(key string) (*http.Request, error) {
 		return nil, fmt.Errorf("Key and origin do not match")
 	}
 	keyNoOrigin := strings.TrimPrefix(key, c.OriginPrefix)
-	if !strings.HasPrefix(keyNoOrigin, "GET"+methodSeparator) {
-		return nil, ErrorMethodNotSupported
-	}
 	keyNoVary, _, found := strings.Cut(keyNoOrigin, varySeparator)
 	if !found {
 		return nil, fmt.Errorf("Malformed key: %s", key)
@@ -96,48 +93,4 @@ func (c CacheKeyer) GetVaryHeaders(key string) http.Header {
 		header.Add(entry[0], entry[1])
 	}
 	return header
-}
-
-// multipartHash returns the hash of a multipart request body.
-// It returns an empty string if the request is not multipart.
-// When it returns, the request body will be rewound to the beginning.
-func multipartHash(r *http.Request) string {
-	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil {
-		return ""
-	}
-	if strings.HasPrefix(mediaType, "multipart/") {
-		body, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			panic(err)
-		}
-		r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-
-		mr := multipart.NewReader(bytes.NewBuffer(body), params["boundary"])
-		p, err := mr.NextPart()
-		if err != nil {
-			return ""
-		}
-		slurp, err := io.ReadAll(p)
-		if err != nil {
-			panic(err)
-		}
-
-		return fmt.Sprintf("%x", sha256.Sum256(slurp))
-	}
-	return ""
-}
-
-// bodyHash returns the hash of a request body.
-// When it returns, the request body will be rewound to the beginning.
-func bodyHash(r *http.Request) string {
-	if r.Body == nil {
-		return ""
-	}
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		panic(err)
-	}
-	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-	return fmt.Sprintf("%x", sha256.Sum256(body))
 }

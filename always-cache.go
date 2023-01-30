@@ -187,11 +187,13 @@ func (a *AlwaysCache) createStoredResponse(ce cache.CacheEntry) *http.Response {
 
 func (a *AlwaysCache) getResponsesForUri(r *http.Request) []cache.CacheEntry {
 	keyUriPrefix := a.keyer.GetKeyPrefix(r)
+	a.log.Trace().Str("key", keyUriPrefix).Msg("Getting cached entries")
 	cacheEntries, err := a.cache.All(keyUriPrefix)
 	if err != nil {
 		a.log.Error().Err(err).Msg("Could not retrieve from cache")
 		return nil
 	}
+	a.log.Trace().Str("key", keyUriPrefix).Msgf("Found %v cache entries", len(cacheEntries))
 	return cacheEntries
 }
 
@@ -457,7 +459,7 @@ func getDelay(update string) time.Duration {
 func (a *AlwaysCache) updateCache() {
 	a.log.Info().Msgf("Starting cache update loop with timeout %s", a.updateTimeout)
 	for {
-		key, expiry, err := a.cache.Oldest(a.keyer.OriginPrefix)
+		key, expiry, err := a.cache.Oldest(a.keyer.MethodPrefix("GET"))
 		// if error, try again in 1 minute
 		if err != nil {
 			a.log.Error().Err(err).Msg("Could not get oldest entry")

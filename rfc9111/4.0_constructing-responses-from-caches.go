@@ -111,6 +111,11 @@ func constructResponse(storedResponse *http.Response, responseTime, requestTime 
 // §     allowed to generate a reply to such a request before having forwarded
 // §     the request and having received a corresponding response.
 func mustWriteThrough(req *http.Request, res *http.Response) bool {
+	// this takes into account a new `safe` caching directive that overrides default method behavior
+	resCacheControl := ParseCacheControl(res.Header.Values("Cache-Control"))
+	if resCacheControl.HasDirective("safe") {
+		return false
+	}
 	if UnsafeRequest(req) {
 		return true
 	}
