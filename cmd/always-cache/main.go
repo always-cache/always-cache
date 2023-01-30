@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"time"
 
-	"github.com/always-cache/always-cache"
+	alwayscache "github.com/always-cache/always-cache"
 	"github.com/always-cache/always-cache/cache"
 
 	"github.com/rs/zerolog"
@@ -70,19 +69,16 @@ func main() {
 	log.Logger = log.Level(logLevel).Output(multiWriter).
 		With().Str("version", version).Logger()
 
-	// always-cache origin instance
-	cacheConfig := alwayscache.Config{}
-
 	// set up sqlite memory provider
 	dbFilename := dbFilenameFlag
 	if dbFilename == "memory" {
 		dbFilename = "file::memory:?cache=shared"
 	}
-	cacheConfig.Cache = cache.NewSQLiteCache(dbFilename)
 
-	// if updates not disabled, update every minute
-	if !legacyModeFlag {
-		cacheConfig.UpdateTimeout = time.Second * 5
+	// always-cache origin instance
+	cacheConfig := alwayscache.Config{
+		Cache:          cache.NewSQLiteCache(dbFilename),
+		DisableUpdates: legacyModeFlag,
 	}
 
 	// get the downstream server address
