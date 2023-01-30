@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -17,7 +16,6 @@ import (
 	"github.com/always-cache/always-cache/cache"
 	cachekey "github.com/always-cache/always-cache/pkg/cache-key"
 	serializer "github.com/always-cache/always-cache/pkg/response-serializer"
-	responsetransformer "github.com/always-cache/always-cache/pkg/response-transformer"
 	tee "github.com/always-cache/always-cache/pkg/response-writer-tee"
 	"github.com/always-cache/always-cache/rfc9111"
 	"github.com/always-cache/always-cache/rfc9211"
@@ -32,14 +30,13 @@ type Config struct {
 	Logger     *zerolog.Logger
 	// RequestModifier is an optional function for mutating the incoming response.
 	// Use it e.g. for setting the request `Cache-Key` header when needed.
-	RequestModifier func(*http.Request)
+	RequestModifier  func(*http.Request)
+	ResponseModifier func(*http.Response) error
 	// Unique cache key identifier.
 	// By default OriginURL will be used.
 	CacheKey string
 	// DEPRECATED: will be changed before v1
 	UpdateTimeout time.Duration
-	// DEPRECATED: will be changed before v1
-	Rules responsetransformer.Rules
 }
 
 type AlwaysCache struct {
@@ -97,7 +94,7 @@ func CreateCache(config Config) *AlwaysCache {
 	a.reverseproxy = httputil.ReverseProxy{
 		Director:       createDirector(config.OriginURL.Scheme, host, hostHeader),
 		Transport:      transport,
-		ModifyResponse: config.Rules.Apply,
+		ModifyResponse: config.ResponseModifier,
 	}
 
 	// start a goroutine to update expired entries
@@ -106,39 +103,6 @@ func CreateCache(config Config) *AlwaysCache {
 	}
 
 	return a
-}
-
-type requestModifier func(*http.Request)
-type responseModifier func(*http.Response) error
-
-func createRequestHelloWorlder(next requestModifier) requestModifier {
-	return func(r *http.Request) {
-		r.GetBody = func() (io.ReadCloser, error) {
-			fmt.Printf("request %p url %p\n", r, r.URL)
-			return io.NopCloser(strings.NewReader("hello world")), nil
-		}
-		r.Header.Add("Cache-Key", "hello world")
-		if next != nil {
-			next(r)
-		}
-	}
-}
-
-func createResponseHelloWorlder(next responseModifier) responseModifier {
-	return func(res *http.Response) error {
-		body, err := res.Request.GetBody()
-		if err != nil {
-			return err
-		}
-		buf := new(strings.Builder)
-		_, err = io.Copy(buf, body)
-		if err != nil {
-			return err
-		}
-		str := buf.String()
-		fmt.Println("request body", str)
-		return next(res)
-	}
 }
 
 type request struct {

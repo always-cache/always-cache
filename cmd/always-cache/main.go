@@ -11,8 +11,6 @@ import (
 
 	"github.com/always-cache/always-cache"
 	"github.com/always-cache/always-cache/cache"
-	"github.com/always-cache/always-cache/pkg/response-transformer"
-	"gopkg.in/yaml.v3"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -20,7 +18,6 @@ import (
 
 var (
 	// CLI flags
-	rulesFilenameFlag  string
 	portFlag           int
 	originFlag         string
 	addrFlag           string
@@ -38,7 +35,6 @@ func init() {
 	flag.StringVar(&originFlag, "origin", "", "Origin URL to proxy to (overrides addr and host)")
 	flag.StringVar(&addrFlag, "addr", "", "Origin IP address to proxy to")
 	flag.StringVar(&hostFlag, "host", "", "Hostname of origin")
-	flag.StringVar(&rulesFilenameFlag, "rules", "", "Path to rules file (overrides default)")
 	flag.IntVar(&portFlag, "port", 8080, "Port to listen on")
 	flag.StringVar(&dbFilenameFlag, "db", "cache.db", "Cache DB file name (use 'memory' for in-memory db)")
 	flag.BoolVar(&legacyModeFlag, "legacy", false, "Legacy mode: do not update, only invalidate if needed")
@@ -76,20 +72,6 @@ func main() {
 
 	// always-cache origin instance
 	cacheConfig := alwayscache.Config{}
-
-	// load rules from filename
-	if rulesFilenameFlag != "" {
-		if configBytes, err := os.ReadFile(rulesFilenameFlag); err != nil {
-			log.Fatal().Err(err).Msgf("Cannot load rules from file %s", rulesFilenameFlag)
-		} else {
-			var rules responsetransformer.Rules
-			if err := yaml.Unmarshal(configBytes, &rules); err != nil {
-				log.Error().Err(err).Msg("Cannot get config")
-			} else {
-				cacheConfig.Rules = rules
-			}
-		}
-	}
 
 	// set up sqlite memory provider
 	dbFilename := dbFilenameFlag
