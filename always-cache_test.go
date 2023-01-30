@@ -66,6 +66,8 @@ func TestCacheUpdate(t *testing.T) {
 
 	acache.ServeHTTP(httptest.NewRecorder(), countReq)
 	acache.ServeHTTP(httptest.NewRecorder(), req)
+	// need to sleep, since updates are async
+	time.Sleep(time.Second)
 	acache.ServeHTTP(rr, countReq)
 
 	if body, err := io.ReadAll(rr.Result().Body); err != nil || fmt.Sprintf("%s", body) != "Called 2 times" {
@@ -94,9 +96,13 @@ func TestUpdateOnPost(t *testing.T) {
 
 	mw.ServeHTTP(httptest.NewRecorder(), get)
 	assertCount(1)
+	// need to sleep, since updates are async
+	time.Sleep(time.Millisecond * 100)
 	mw.ServeHTTP(httptest.NewRecorder(), get)
 	assertCount(1)
 	mw.ServeHTTP(httptest.NewRecorder(), post)
+	// need to sleep, since updates are async
+	time.Sleep(time.Second)
 	// post will first do the actual post and then refresh with a get
 	assertCount(3)
 	mw.ServeHTTP(httptest.NewRecorder(), get)
@@ -105,7 +111,7 @@ func TestUpdateOnPost(t *testing.T) {
 	server.Shutdown(context.Background())
 }
 
-func TestUpdateBeforeResponding(t *testing.T) {
+func TestUpdateBeforeRespondingOnRedirect(t *testing.T) {
 	listCount := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/list", func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +124,7 @@ func TestUpdateBeforeResponding(t *testing.T) {
 		if r.Method == "POST" {
 			listCount++
 			w.Header().Add("cache-update", "/list")
+			w.WriteHeader(http.StatusSeeOther)
 			w.Write([]byte("done"))
 		} else {
 			w.Write([]byte("nothing to do on get"))

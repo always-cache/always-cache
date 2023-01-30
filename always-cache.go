@@ -30,6 +30,9 @@ type Config struct {
 	OriginURL  url.URL
 	OriginHost string
 	Logger     *zerolog.Logger
+	// RequestModifier is an optional function for mutating the incoming response.
+	// Use it e.g. for setting the request `Cache-Key` header when needed.
+	RequestModifier func(*http.Request)
 	// Unique cache key identifier.
 	// By default OriginURL will be used.
 	CacheKey string
@@ -40,11 +43,12 @@ type Config struct {
 }
 
 type AlwaysCache struct {
-	cache         cache.CacheProvider
-	keyer         cachekey.CacheKeyer
-	log           zerolog.Logger
-	updateTimeout time.Duration
-	reverseproxy  httputil.ReverseProxy
+	cache          cache.CacheProvider
+	keyer          cachekey.CacheKeyer
+	log            zerolog.Logger
+	updateTimeout  time.Duration
+	reverseproxy   httputil.ReverseProxy
+	modifyResponse func(*http.Request)
 }
 
 // CreateCache initializes the always-cache instance.
@@ -71,10 +75,11 @@ func CreateCache(config Config) *AlwaysCache {
 		Logger()
 
 	a := &AlwaysCache{
-		cache:         config.Cache,
-		keyer:         cachekey.NewCacheKeyer(cacheKey),
-		log:           logger,
-		updateTimeout: config.UpdateTimeout,
+		cache:          config.Cache,
+		keyer:          cachekey.NewCacheKeyer(cacheKey),
+		log:            logger,
+		modifyResponse: config.RequestModifier,
+		updateTimeout:  config.UpdateTimeout,
 	}
 
 	host := config.OriginURL.Host
@@ -144,7 +149,9 @@ type request struct {
 
 // ServeHTTP implements the http.Handler interface.
 func (a *AlwaysCache) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	createRequestHelloWorlder(nil)(r)
+	if a.modifyResponse != nil {
+		a.modifyResponse(r)
+	}
 	for _, ce := range a.getResponsesForUri(r) {
 		if a.reuseOrValidate(w, r, ce) == "" {
 			return
@@ -229,6 +236,7 @@ func (a *AlwaysCache) updateResposeAndLocations(rw *tee.ResponseSaver, r *http.R
 	a.updateIfNeeded(r, &http.Response{
 		StatusCode: rw.StatusCode(),
 		Header:     rw.Header(),
+		Request:    r,
 	})
 }
 
@@ -245,7 +253,24 @@ func (a *AlwaysCache) proxy(w http.ResponseWriter, r *http.Request) {
 	// log request
 	go a.logRequest(r, cs)
 	// save to cache in goroutine (do not slow down response)
-	go a.updateResposeAndLocations(rwtee, r)
+	// if it's a redirect, though, the redirect is likely to be to the updated content,
+	// in which case we update synchronously
+	if isRedirect(rwtee.StatusCode()) {
+		a.updateResposeAndLocations(rwtee, r)
+	} else {
+		go a.updateResposeAndLocations(rwtee, r)
+	}
+}
+
+func isRedirect(statusCode int) bool {
+	if statusCode == 301 ||
+		statusCode == 302 ||
+		statusCode == 303 ||
+		statusCode == 307 ||
+		statusCode == 308 {
+		return true
+	}
+	return false
 }
 
 func (a *AlwaysCache) writeCache(rw *tee.ResponseSaver, r *http.Request) (bool, error) {
