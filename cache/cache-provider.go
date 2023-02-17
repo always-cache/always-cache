@@ -2,6 +2,7 @@ package cache
 
 import (
 	"database/sql"
+	"errors"
 	"sync"
 	"time"
 
@@ -97,6 +98,9 @@ func (s SQLiteCache) All(prefix string) ([]CacheEntry, error) {
 		key, expires, requested_at, received_at, bytes
 		FROM cache WHERE key LIKE ?`, prefix+"%")
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return entries, nil
+		}
 		return entries, err
 	}
 	for rows.Next() {
@@ -150,6 +154,9 @@ func (s SQLiteCache) Oldest(prefix string) (string, time.Time, error) {
 		prefix+"%",
 	).Scan(&key, &expires)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, nil
+		}
 		return "", time.Time{}, err
 	}
 	return key, time.Unix(expires, 0), nil

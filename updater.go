@@ -69,7 +69,6 @@ func (a *AlwaysCache) updateCache() {
 		if key != "" && expiry.Sub(time.Now()) <= a.updateTimeout {
 			a.updateEntry(key)
 		} else {
-			a.log.Trace().Msg("No entries expiring, pausing update")
 			time.Sleep(a.updateTimeout)
 		}
 	}
